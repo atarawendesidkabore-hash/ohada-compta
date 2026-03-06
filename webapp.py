@@ -82,6 +82,12 @@ if entreprise:
 else:
     st.sidebar.warning("Aucune entreprise configuree")
 
+# Cross-links to other WASI Ecosystem modules
+st.sidebar.divider()
+st.sidebar.caption("Ecosysteme WASI")
+st.sidebar.markdown("[WASI Intelligence](https://wasi-backend-api.onrender.com/docs)")
+st.sidebar.markdown("[AfriTax - Module Fiscal](https://fiscal-liberal-api.onrender.com)")
+
 # ============================================================================
 # PAGE: ACCUEIL
 # ============================================================================
