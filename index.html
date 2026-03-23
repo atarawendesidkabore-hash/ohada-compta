@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OHADA Compta — SYSCOHADA & SYCEBNL</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav class="topbar">
+    <div class="topbar-left">
+      <div class="logo">OHADA<span class="accent">COMPTA</span></div>
+      <span class="topbar-label">Comptabilite SYSCOHADA & SYCEBNL</span>
+    </div>
+    <div class="topbar-right">
+      <select id="referentiel-select" class="ref-select">
+        <option value="syscohada">SYSCOHADA Revise</option>
+        <option value="sycebnl">SYCEBNL</option>
+      </select>
+      <span class="topbar-meta" id="clock"></span>
+    </div>
+  </nav>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="nav-section">
+        <div class="nav-heading">Navigation</div>
+        <button class="nav-btn active" data-tab="dashboard">Tableau de bord</button>
+        <button class="nav-btn" data-tab="plan">Plan comptable</button>
+        <button class="nav-btn" data-tab="journal">Journal</button>
+        <button class="nav-btn" data-tab="grandlivre">Grand livre</button>
+        <button class="nav-btn" data-tab="balance">Balance</button>
+        <button class="nav-btn" data-tab="bilan">Bilan</button>
+        <button class="nav-btn" data-tab="resultat">Compte de resultat</button>
+        <button class="nav-btn" data-tab="tafire">TAFIRE</button>
+        <button class="nav-btn" data-tab="annexes">Notes annexes</button>
+      </div>
+      <div class="nav-section">
+        <div class="nav-heading">Outils</div>
+        <button class="nav-btn" data-tab="saisie">Saisie ecriture</button>
+        <button class="nav-btn" data-tab="cloture">Cloture exercice</button>
+        <button class="nav-btn" data-tab="dsf">Declaration DSF/DGI</button>
+      </div>
+      <div class="nav-section">
+        <div class="nav-heading">Reference</div>
+        <button class="nav-btn" data-tab="guide">Guide OHADA</button>
+        <button class="nav-btn" data-tab="comparaison">SYSCOHADA vs SYCEBNL</button>
+      </div>
+    </aside>
+
+    <main class="main" id="main-content"></main>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
