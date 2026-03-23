@@ -19,13 +19,31 @@ document.getElementById("referentiel-select").addEventListener("change", (e) => 
   render();
 });
 
+// Mobile menu
+const mobileBtn = document.getElementById("mobile-menu-btn");
+const mobileOverlay = document.getElementById("mobile-overlay");
+const sidebar = document.getElementById("sidebar");
+
+function openMobileMenu() {
+  sidebar.classList.add("mobile-open");
+  mobileOverlay.classList.add("open");
+}
+function closeMobileMenu() {
+  sidebar.classList.remove("mobile-open");
+  mobileOverlay.classList.remove("open");
+}
+if (mobileBtn) mobileBtn.addEventListener("click", openMobileMenu);
+if (mobileOverlay) mobileOverlay.addEventListener("click", closeMobileMenu);
+
 // Navigation
 document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     currentTab = btn.dataset.tab;
+    closeMobileMenu();
     render();
+    window.scrollTo(0, 0);
   });
 });
 
