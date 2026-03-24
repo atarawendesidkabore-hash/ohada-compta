@@ -284,28 +284,7 @@ const JOURNAL_CODES = [
 ];
 
 // Sample journal entries for demo
-const SAMPLE_JOURNAL = [
-  { id: 1, date: "2026-01-15", journal: "VT", piece: "VT-001", compte: "411", libelle: "Client ALPHA - Facture F001", debit: 1180000, credit: 0, ref: "F-001" },
-  { id: 2, date: "2026-01-15", journal: "VT", piece: "VT-001", compte: "701", libelle: "Vente de marchandises", debit: 0, credit: 1000000, ref: "F-001" },
-  { id: 3, date: "2026-01-15", journal: "VT", piece: "VT-001", compte: "4451", libelle: "TVA collectee 18%", debit: 0, credit: 180000, ref: "F-001" },
-  { id: 4, date: "2026-01-20", journal: "AC", piece: "AC-001", compte: "601", libelle: "Achat marchandises BETA", debit: 500000, credit: 0, ref: "FA-101" },
-  { id: 5, date: "2026-01-20", journal: "AC", piece: "AC-001", compte: "4452", libelle: "TVA deductible 18%", debit: 90000, credit: 0, ref: "FA-101" },
-  { id: 6, date: "2026-01-20", journal: "AC", piece: "AC-001", compte: "401", libelle: "Fournisseur BETA", debit: 0, credit: 590000, ref: "FA-101" },
-  { id: 7, date: "2026-01-25", journal: "BQ", piece: "BQ-001", compte: "521", libelle: "Encaissement client ALPHA", debit: 1180000, credit: 0, ref: "REC-001" },
-  { id: 8, date: "2026-01-25", journal: "BQ", piece: "BQ-001", compte: "411", libelle: "Client ALPHA - Reglement", debit: 0, credit: 1180000, ref: "REC-001" },
-  { id: 9, date: "2026-02-01", journal: "SA", piece: "SA-001", compte: "661", libelle: "Salaires janvier", debit: 2500000, credit: 0, ref: "PAY-01" },
-  { id: 10, date: "2026-02-01", journal: "SA", piece: "SA-001", compte: "664", libelle: "Charges sociales janv.", debit: 450000, credit: 0, ref: "PAY-01" },
-  { id: 11, date: "2026-02-01", journal: "SA", piece: "SA-001", compte: "423", libelle: "Personnel - Remunerations dues", debit: 0, credit: 2500000, ref: "PAY-01" },
-  { id: 12, date: "2026-02-01", journal: "SA", piece: "SA-001", compte: "431", libelle: "Securite sociale", debit: 0, credit: 450000, ref: "PAY-01" },
-  { id: 13, date: "2026-02-05", journal: "BQ", piece: "BQ-002", compte: "401", libelle: "Paiement fournisseur BETA", debit: 590000, credit: 0, ref: "VIR-002" },
-  { id: 14, date: "2026-02-05", journal: "BQ", piece: "BQ-002", compte: "521", libelle: "Banque - Paiement BETA", debit: 0, credit: 590000, ref: "VIR-002" },
-  { id: 15, date: "2026-02-10", journal: "OD", piece: "OD-001", compte: "681", libelle: "Dotation amortissement - Materiel bureau", debit: 125000, credit: 0, ref: "AM-01" },
-  { id: 16, date: "2026-02-10", journal: "OD", piece: "OD-001", compte: "284", libelle: "Amort. materiel", debit: 0, credit: 125000, ref: "AM-01" },
-  { id: 17, date: "2026-02-15", journal: "CA", piece: "CA-001", compte: "571", libelle: "Encaissement especes - Vente comptoir", debit: 200000, credit: 0, ref: "RC-001" },
-  { id: 18, date: "2026-02-15", journal: "CA", piece: "CA-001", compte: "701", libelle: "Vente comptoir especes", debit: 0, credit: 200000, ref: "RC-001" },
-  { id: 19, date: "2026-03-01", journal: "BQ", piece: "BQ-003", compte: "622", libelle: "Loyer mars", debit: 350000, credit: 0, ref: "LOY-03" },
-  { id: 20, date: "2026-03-01", journal: "BQ", piece: "BQ-003", compte: "521", libelle: "Banque - Loyer mars", debit: 0, credit: 350000, ref: "LOY-03" },
-];
+const SAMPLE_JOURNAL = [];
 
 // OHADA financial statement blocks
 const BILAN_STRUCTURE = {
