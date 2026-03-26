@@ -50,7 +50,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 function getPlan() {
   if (currentRef === "sycebnl") {
     const base = PLAN_COMPTABLE_SYSCOHADA.filter(a => a.numero !== "13" && a.numero !== "131" && a.numero !== "139");
-    return [...base, ...PLAN_COMPTABLE_SYCEBNL_ADDITIONS].sort((a, b) => a.numero.localeCompare(b.numero));
+    return [...base, ...PLAN_COMPTABLE_SYCEBNL_ADDITIONS, ...PLAN_COMPTABLE_SYCEBNL_CLASSE9].sort((a, b) => a.numero.localeCompare(b.numero));
   }
   return PLAN_COMPTABLE_SYSCOHADA;
 }
@@ -68,11 +68,17 @@ function getClassColor(c) {
   return cl ? cl.color : "#8A9BB5";
 }
 
-// Compute balances from journal
+// Compute balances from journal (opening balances from OPENING_BALANCES seeded first)
 function computeBalances() {
   const balances = {};
+  // Seed opening balances (N-1)
+  Object.keys(OPENING_BALANCES).forEach(code => {
+    const ob = OPENING_BALANCES[code];
+    balances[code] = { n1d: ob.n1d, n1c: ob.n1c, debit: ob.n1d, credit: ob.n1c };
+  });
+  // Add current-year movements
   journalEntries.forEach((e) => {
-    if (!balances[e.compte]) balances[e.compte] = { debit: 0, credit: 0 };
+    if (!balances[e.compte]) balances[e.compte] = { n1d: 0, n1c: 0, debit: 0, credit: 0 };
     balances[e.compte].debit += e.debit;
     balances[e.compte].credit += e.credit;
   });
@@ -93,6 +99,7 @@ function render() {
     case "bilan": main.innerHTML = renderBilan(); break;
     case "resultat": main.innerHTML = renderResultat(); break;
     case "tafire": main.innerHTML = renderTafire(); break;
+    case "amortissements": main.innerHTML = renderAmortissements(); break;
     case "annexes": main.innerHTML = renderAnnexes(); break;
     case "saisie": main.innerHTML = renderSaisie(); break;
     case "cloture": main.innerHTML = renderCloture(); break;
@@ -118,7 +125,7 @@ function renderDashboard() {
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-label">Referentiel</div><div class="kpi-value" style="font-size:1.2rem;color:var(--gold);">${refLabel}</div><div class="kpi-note">Norme en vigueur</div></div>
       <div class="kpi"><div class="kpi-label">Comptes</div><div class="kpi-value">${plan.length}</div><div class="kpi-note">Plan comptable actif</div></div>
-      <div class="kpi"><div class="kpi-label">Classes</div><div class="kpi-value">8</div><div class="kpi-note">Classes 1 a 8</div></div>
+      <div class="kpi"><div class="kpi-label">Classes</div><div class="kpi-value">${currentRef==="sycebnl"?9:8}</div><div class="kpi-note">Classes 1 a ${currentRef==="sycebnl"?9:8}</div></div>
       <div class="kpi"><div class="kpi-label">Ecritures</div><div class="kpi-value">${journalEntries.length}</div><div class="kpi-note">Journal general</div></div>
       <div class="kpi"><div class="kpi-label">Total debit</div><div class="kpi-value" style="color:var(--green);font-size:1.1rem;">${fmt(totalDebit)}</div><div class="kpi-note">XOF</div></div>
       <div class="kpi"><div class="kpi-label">Total credit</div><div class="kpi-value" style="color:var(--red);font-size:1.1rem;">${fmt(totalCredit)}</div><div class="kpi-note">XOF</div></div>
@@ -322,30 +329,44 @@ function renderBalance() {
   const bal = computeBalances();
   const plan = getPlan();
   const comptes = Object.keys(bal).sort();
-  let totalD = 0, totalC = 0, totalSD = 0, totalSC = 0;
+  let totN1D=0,totN1C=0,totMvtD=0,totMvtC=0,totSD=0,totSC=0;
 
   const rows = comptes.map(code => {
     const account = plan.find(a => a.numero === code);
-    const d = bal[code].debit;
-    const c = bal[code].credit;
-    const solde = d - c;
-    totalD += d; totalC += c;
-    if (solde > 0) totalSD += solde; else totalSC += Math.abs(solde);
-    return { code, label: account ? account.libelle : 'Inconnu', classe: account ? account.classe : 0, d, c, solde };
+    const n1d = bal[code].n1d||0, n1c = bal[code].n1c||0;
+    const mvtD = bal[code].debit - n1d, mvtC = bal[code].credit - n1c;
+    const solde = bal[code].debit - bal[code].credit;
+    totN1D+=n1d; totN1C+=n1c; totMvtD+=mvtD; totMvtC+=mvtC;
+    if (solde>0) totSD+=solde; else totSC+=Math.abs(solde);
+    return {code, label:account?account.libelle:'Inconnu', classe:account?account.classe:0, n1d,n1c,mvtD,mvtC,solde};
   });
 
   return `
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">Balance generale</div>
-          <div class="card-subtitle">${comptes.length} comptes mouvementes | Equilibre: ${totalD === totalC ? 'OK' : 'ERREUR'}</div>
+          <div class="card-title">Balance generale — ${currentRef==="sycebnl"?"SYCEBNL":"SYSCOHADA Revise"}</div>
+          <div class="card-subtitle">${comptes.length} comptes | S.O.: ${totN1D===totN1C?'OK':'ERR'} | Mvt: ${totMvtD===totMvtC?'OK':'ERREUR'}</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <label class="btn btn-outline" style="cursor:pointer;font-size:0.78rem;">
+            Importer CSV <input type="file" accept=".csv" style="display:none;" onchange="importBalanceCsv(this)">
+          </label>
+          <button class="btn btn-outline" style="font-size:0.78rem;" onclick="downloadBalanceTemplate()">Modele CSV</button>
         </div>
       </div>
       <div style="overflow-x:auto;">
         <table class="data-table">
           <thead>
-            <tr><th>Compte</th><th>Libelle</th><th>Cl.</th><th style="text-align:right;">Mvt Debit</th><th style="text-align:right;">Mvt Credit</th><th style="text-align:right;">Solde D</th><th style="text-align:right;">Solde C</th></tr>
+            <tr>
+              <th>Compte</th><th>Libelle</th><th>Cl.</th>
+              <th style="text-align:right;color:var(--cyan);">S.O. Debit</th>
+              <th style="text-align:right;color:var(--cyan);">S.O. Credit</th>
+              <th style="text-align:right;">Mvt Debit</th>
+              <th style="text-align:right;">Mvt Credit</th>
+              <th style="text-align:right;color:var(--gold);">Solde D</th>
+              <th style="text-align:right;color:var(--gold);">Solde C</th>
+            </tr>
           </thead>
           <tbody>
             ${rows.map(r => `
@@ -353,24 +374,63 @@ function renderBalance() {
                 <td class="code">${r.code}</td>
                 <td>${r.label}</td>
                 <td><span class="class-badge class-${r.classe}">${r.classe}</span></td>
-                <td style="text-align:right;">${fmt(r.d)}</td>
-                <td style="text-align:right;">${fmt(r.c)}</td>
-                <td style="text-align:right;" class="debit">${r.solde > 0 ? fmt(r.solde) : ''}</td>
-                <td style="text-align:right;" class="credit">${r.solde < 0 ? fmt(Math.abs(r.solde)) : ''}</td>
+                <td style="text-align:right;color:var(--cyan);font-size:0.82rem;">${r.n1d>0?fmt(r.n1d):''}</td>
+                <td style="text-align:right;color:var(--cyan);font-size:0.82rem;">${r.n1c>0?fmt(r.n1c):''}</td>
+                <td style="text-align:right;">${r.mvtD>0?fmt(r.mvtD):''}</td>
+                <td style="text-align:right;">${r.mvtC>0?fmt(r.mvtC):''}</td>
+                <td style="text-align:right;" class="debit">${r.solde>0?fmt(r.solde):''}</td>
+                <td style="text-align:right;" class="credit">${r.solde<0?fmt(Math.abs(r.solde)):''}</td>
               </tr>
             `).join("")}
-            <tr style="border-top:2px solid var(--gold);font-weight:700;">
+            <tr style="border-top:2px solid var(--gold);font-weight:700;font-size:0.82rem;">
               <td colspan="3" style="text-align:right;color:var(--gold);">TOTAUX</td>
-              <td style="text-align:right;">${fmt(totalD)}</td>
-              <td style="text-align:right;">${fmt(totalC)}</td>
-              <td style="text-align:right;" class="debit">${fmt(totalSD)}</td>
-              <td style="text-align:right;" class="credit">${fmt(totalSC)}</td>
+              <td style="text-align:right;color:var(--cyan);">${fmt(totN1D)}</td>
+              <td style="text-align:right;color:var(--cyan);">${fmt(totN1C)}</td>
+              <td style="text-align:right;">${fmt(totMvtD)}</td>
+              <td style="text-align:right;">${fmt(totMvtC)}</td>
+              <td style="text-align:right;" class="debit">${fmt(totSD)}</td>
+              <td style="text-align:right;" class="credit">${fmt(totSC)}</td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
   `;
+}
+
+function importBalanceCsv(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const lines = e.target.result.split('\n').slice(1);
+    let count = 0;
+    lines.forEach(line => {
+      const cols = line.split(',');
+      if (cols.length < 4) return;
+      const code = cols[0].trim().replace(/"/g,'');
+      const n1d = parseFloat(cols[2])||0;
+      const n1c = parseFloat(cols[3])||0;
+      if (code) { OPENING_BALANCES[code] = {n1d, n1c}; count++; }
+    });
+    alert('Soldes d ouverture importes: ' + count + ' comptes mis a jour.');
+    render();
+  };
+  reader.readAsText(file);
+}
+
+function downloadBalanceTemplate() {
+  const plan = getPlan();
+  let csv = 'Compte,Libelle,S.O. Debit,S.O. Credit\n';
+  plan.forEach(a => {
+    const ob = OPENING_BALANCES[a.numero]||{n1d:0,n1c:0};
+    csv += '"' + a.numero + '","' + a.libelle + '",' + ob.n1d + ',' + ob.n1c + '\n';
+  });
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'balance_ouverture_template.csv'; a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -427,33 +487,120 @@ function renderBilan() {
 // ═══════════════════════════════════════════════════════════
 function renderResultat() {
   const bal = computeBalances();
-  let totalProduits = 0, totalCharges = 0;
 
+  if (currentRef === "sycebnl") {
+    // SYCEBNL — format PAO (Produits) / CAO (Charges) + Classe 9
+    function sumSection(rows) {
+      return rows.map(s => {
+        let total = 0;
+        Object.keys(bal).forEach(code => {
+          if (s.comptes.some(p => code.startsWith(p))) {
+            const mvtD = (bal[code].debit||0) - (bal[code].n1d||0);
+            const mvtC = (bal[code].credit||0) - (bal[code].n1c||0);
+            if (s.sens === "credit") total += mvtC - mvtD;
+            else total += mvtD - mvtC;
+          }
+        });
+        return { ...s, total };
+      });
+    }
+    const paoRows = sumSection(RESULTAT_SYCEBNL_STRUCTURE.pao);
+    const caoRows = sumSection(RESULTAT_SYCEBNL_STRUCTURE.cao);
+    const totalPAO = paoRows.reduce((s,r)=>s+r.total,0);
+    const totalCAO = caoRows.reduce((s,r)=>s+r.total,0);
+    const resultatNet = totalPAO - totalCAO;
+    let cv9Emplois=0, cv9Ressources=0;
+    Object.keys(bal).forEach(code => {
+      const mvtD=(bal[code].debit||0)-(bal[code].n1d||0);
+      const mvtC=(bal[code].credit||0)-(bal[code].n1c||0);
+      if (code.startsWith("91")) cv9Emplois += mvtD-mvtC;
+      if (code.startsWith("92")) cv9Ressources += mvtC-mvtD;
+    });
+    return `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Compte de resultat — SYCEBNL</div>
+          <div class="card-subtitle">Associations, ONG, Fondations — Exercice 2026</div>
+        </div>
+        <div class="section-title" style="color:var(--green);margin-top:12px;">PAO — Produits des Activites Ordinaires</div>
+        <table class="data-table" style="margin-bottom:16px;">
+          <thead><tr><th>Ref</th><th>Libelle</th><th style="text-align:right;">Montant (XOF)</th></tr></thead>
+          <tbody>
+            ${paoRows.map(r=>`<tr>
+              <td class="code" style="color:var(--cyan);">${r.ref}</td>
+              <td>${r.label}</td>
+              <td style="text-align:right;" class="credit">${r.total>0?fmt(r.total):'-'}</td>
+            </tr>`).join("")}
+            <tr style="font-weight:700;border-top:2px solid var(--green);">
+              <td colspan="2" style="color:var(--green);">TOTAL PAO</td>
+              <td style="text-align:right;" class="credit">${fmt(totalPAO)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="section-title" style="color:var(--red);">CAO — Charges des Activites Ordinaires</div>
+        <table class="data-table" style="margin-bottom:16px;">
+          <thead><tr><th>Ref</th><th>Libelle</th><th style="text-align:right;">Montant (XOF)</th></tr></thead>
+          <tbody>
+            ${caoRows.map(r=>`<tr>
+              <td class="code" style="color:var(--orange);">${r.ref}</td>
+              <td>${r.label}</td>
+              <td style="text-align:right;" class="debit">${r.total>0?fmt(r.total):'-'}</td>
+            </tr>`).join("")}
+            <tr style="font-weight:700;border-top:2px solid var(--red);">
+              <td colspan="2" style="color:var(--red);">TOTAL CAO</td>
+              <td style="text-align:right;" class="debit">${fmt(totalCAO)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <table class="data-table" style="margin-bottom:16px;">
+          <tbody>
+            <tr style="font-weight:700;font-size:1.1rem;border-top:2px solid var(--gold);">
+              <td style="color:var(--gold);">RESULTAT NET — ${resultatNet>=0?'EXCEDENT':'DEFICIT'}</td>
+              <td style="text-align:right;font-family:var(--mono);color:${resultatNet>=0?'var(--green)':'var(--red)'};">${
+fmt(Math.abs(resultatNet))} XOF</td>
+            </tr>
+          </tbody>
+        </table>
+        ${cv9Emplois>0||cv9Ressources>0?`
+        <div class="section-title" style="color:var(--cyan);">Classe 9 — Contributions volontaires en nature</div>
+        <table class="data-table">
+          <tbody>
+            <tr><td>Emplois valorises (91x)</td><td style="text-align:right;" class="debit">${fmt(cv9Emplois)}</td></tr>
+            <tr><td>Ressources valorisees (92x)</td><td style="text-align:right;" class="credit">${fmt(cv9Ressources)}</td></tr>
+          </tbody>
+        </table>`:''}
+      </div>
+    `;
+  }
+
+  // SYSCOHADA standard
+  let totalProduits = 0, totalCharges = 0;
   const rows = RESULTAT_STRUCTURE.map(s => {
     let total = 0;
     Object.keys(bal).forEach(code => {
       if (s.comptes.some(p => code.startsWith(p))) {
-        if (s.sens === "credit") total += bal[code].credit - bal[code].debit;
-        else total += bal[code].debit - bal[code].credit;
+        const mvtD=(bal[code].debit||0)-(bal[code].n1d||0);
+        const mvtC=(bal[code].credit||0)-(bal[code].n1c||0);
+        if (s.sens === "credit") total += mvtC - mvtD;
+        else total += mvtD - mvtC;
       }
     });
     if (s.sens === "credit") totalProduits += total; else totalCharges += total;
     return { section: s.section, total, sens: s.sens };
   });
-
   const resultat = totalProduits - totalCharges;
 
   return `
     <div class="card">
-      <div class="card-header"><div class="card-title">Compte de resultat — ${currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise"}</div></div>
+      <div class="card-header"><div class="card-title">Compte de resultat — SYSCOHADA Revise</div></div>
       <table class="data-table">
         <thead><tr><th>Section</th><th>Type</th><th style="text-align:right;">Montant (XOF)</th></tr></thead>
         <tbody>
           ${rows.map(r => `
             <tr>
               <td>${r.section}</td>
-              <td style="font-size:0.78rem;"><span class="${r.sens === 'credit' ? 'sens-credit' : 'sens-debit'}">${r.sens === 'credit' ? 'Produit' : 'Charge'}</span></td>
-              <td style="text-align:right;font-family:var(--mono);" class="${r.sens === 'credit' ? 'credit' : 'debit'}">${fmt(Math.abs(r.total))}</td>
+              <td style="font-size:0.78rem;"><span class="${r.sens==='credit'?'sens-credit':'sens-debit'}">${r.sens==='credit'?'Produit':'Charge'}</span></td>
+              <td style="text-align:right;font-family:var(--mono);" class="${r.sens==='credit'?'credit':'debit'}">${fmt(Math.abs(r.total))}</td>
             </tr>
           `).join("")}
           <tr style="font-weight:700;border-top:2px solid var(--gold);">
@@ -464,14 +611,14 @@ function renderResultat() {
           </tr>
           <tr style="font-weight:700;border-top:2px solid var(--gold);font-size:1.1rem;">
             <td style="color:var(--gold);">RESULTAT NET</td><td></td>
-            <td style="text-align:right;color:${resultat >= 0 ? 'var(--green)' : 'var(--red)'};">${resultat >= 0 ? 'Benefice' : 'Perte'}: ${fmt(Math.abs(resultat))} XOF</td>
+            <td style="text-align:right;color:${resultat>=0?'var(--green)':'var(--red)'};">${
+resultat>=0?'Benefice':'Perte'}: ${fmt(Math.abs(resultat))} XOF</td>
           </tr>
         </tbody>
       </table>
     </div>
   `;
 }
-
 // ═══════════════════════════════════════════════════════════
 // TAFIRE
 // ═══════════════════════════════════════════════════════════
@@ -509,6 +656,105 @@ function renderTafire() {
       </div>
     </div>
   `;
+}
+
+// ═══════════════════════════════════════════════════════════
+// TABLEAU DES AMORTISSEMENTS
+// ═══════════════════════════════════════════════════════════
+function renderAmortissements() {
+  const bal = computeBalances();
+  const plan = getPlan();
+  const immos = plan.filter(a => a.classe===2 && a.sens==="Debit" && bal[a.numero]);
+  const durees = {"21":5,"211":5,"212":5,"213":10,"214":10,"22":0,"23":20,"231":20,"232":20,
+    "234":10,"235":7,"24":5,"241":5,"242":5,"244":3,"245":5,"246":7,"248":5};
+  function amortCode(c){if(c.startsWith("21"))return"281";if(c.startsWith("22"))return"282";if(c.startsWith("23"))return"283";return"284";}
+
+  const rows = immos.map(a => {
+    const vbo = bal[a.numero].debit;
+    if (!vbo) return null;
+    const ac = amortCode(a.numero);
+    const cumulN1 = ac && bal[ac] ? (bal[ac].n1c||0) : 0;
+    const duree = durees[a.numero]||5;
+    const taux = duree>0 ? Math.round(10000/duree)/100 : 0;
+    const dotation = duree>0 ? Math.round(vbo/duree) : 0;
+    const cumulN = cumulN1 + dotation;
+    const vnc = Math.max(0, vbo - cumulN);
+    return {code:a.numero,label:a.libelle,vbo,duree,taux,cumulN1,dotation,cumulN,vnc};
+  }).filter(r=>r&&r.vbo>0);
+
+  const totVBO=rows.reduce((s,r)=>s+r.vbo,0);
+  const totDot=rows.reduce((s,r)=>s+r.dotation,0);
+  const totCN1=rows.reduce((s,r)=>s+r.cumulN1,0);
+  const totCN=rows.reduce((s,r)=>s+r.cumulN,0);
+  const totVNC=rows.reduce((s,r)=>s+r.vnc,0);
+
+  return `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Tableau des amortissements des immobilisations</div>
+          <div class="card-subtitle">${rows.length} immobilisations</div>
+        </div>
+        <button class="btn btn-outline" style="font-size:0.78rem;" onclick="exportAmortCsv()">Export CSV</button>
+      </div>
+      ${rows.length===0?'<div class="info-box">Aucune immobilisation mouvementee dans le journal. Saisissez des ecritures sur les comptes de classe 2.</div>':''}
+      ${rows.length>0?`
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr>
+            <th>Compte</th><th>Libelle</th>
+            <th style="text-align:right;">V.B.O.</th>
+            <th style="text-align:center;">Duree</th>
+            <th style="text-align:center;">Taux</th>
+            <th style="text-align:right;color:var(--cyan);">Cumul N-1</th>
+            <th style="text-align:right;color:var(--gold);">Dotation N</th>
+            <th style="text-align:right;color:var(--orange);">Cumul N</th>
+            <th style="text-align:right;color:var(--green);">V.N.C.</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r=>`<tr>
+              <td class="code">${r.code}</td><td>${r.label}</td>
+              <td style="text-align:right;font-family:var(--mono);">${fmt(r.vbo)}</td>
+              <td style="text-align:center;">${r.duree>0?r.duree+' ans':'N/A'}</td>
+              <td style="text-align:center;font-family:var(--mono);">${r.taux>0?r.taux+'%':'—'}</td>
+              <td style="text-align:right;color:var(--cyan);font-family:var(--mono);">${fmt(r.cumulN1)}</td>
+              <td style="text-align:right;color:var(--gold);font-family:var(--mono);font-weight:700;">${fmt(r.dotation)}</td>
+              <td style="text-align:right;color:var(--orange);font-family:var(--mono);">${fmt(r.cumulN)}</td>
+              <td style="text-align:right;font-family:var(--mono);" class="debit">${fmt(r.vnc)}</td>
+            </tr>`).join("")}
+            <tr style="border-top:2px solid var(--gold);font-weight:700;">
+              <td colspan="2" style="color:var(--gold);">TOTAUX</td>
+              <td style="text-align:right;">${fmt(totVBO)}</td>
+              <td colspan="2"></td>
+              <td style="text-align:right;color:var(--cyan);">${fmt(totCN1)}</td>
+              <td style="text-align:right;color:var(--gold);">${fmt(totDot)}</td>
+              <td style="text-align:right;color:var(--orange);">${fmt(totCN)}</td>
+              <td style="text-align:right;">${fmt(totVNC)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>`:''}
+    </div>
+  `;
+}
+
+function exportAmortCsv() {
+  const bal = computeBalances();
+  const plan = getPlan();
+  const durees={"21":5,"211":5,"212":5,"213":10,"214":10,"22":0,"23":20,"231":20,"232":20,"234":10,"235":7,"24":5,"241":5,"242":5,"244":3,"245":5,"246":7,"248":5};
+  function ac(c){if(c.startsWith("21"))return"281";if(c.startsWith("22"))return"282";if(c.startsWith("23"))return"283";return"284";}
+  let csv='Compte,Libelle,VBO,Duree,Taux%,Cumul N-1,Dotation N,Cumul N,VNC\n';
+  plan.filter(a=>a.classe===2&&a.sens==="Debit"&&bal[a.numero]).forEach(a=>{
+    const vbo=bal[a.numero].debit; if(!vbo) return;
+    const cn1=bal[ac(a.numero)]?(bal[ac(a.numero)].n1c||0):0;
+    const d=durees[a.numero]||5;
+    const dot=d>0?Math.round(vbo/d):0;
+    csv+='"'+a.numero+'","'+a.libelle+'",'+vbo+','+d+','+(d>0?Math.round(10000/d)/100:0)+','+cn1+','+dot+','+(cn1+dot)+','+Math.max(0,vbo-cn1-dot)+'\n';
+  });
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const el=document.createElement('a');el.href=url;el.download='amortissements.csv';el.click();
+  URL.revokeObjectURL(url);
 }
 
 // ═══════════════════════════════════════════════════════════

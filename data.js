@@ -10,6 +10,7 @@ const SYSCOHADA_CLASSES = [
   { num: 6, label: "Comptes de charges des activites ordinaires", color: "#FF5252", type: "Gestion", sens: "Debit" },
   { num: 7, label: "Comptes de produits des activites ordinaires", color: "#00E676", type: "Gestion", sens: "Credit" },
   { num: 8, label: "Comptes des autres charges et produits", color: "#a78bfa", type: "Gestion", sens: "Variable" },
+  { num: 9, label: "Contributions volontaires en nature (SYCEBNL)", color: "#64FFDA", type: "Gestion", sens: "Variable" },
 ];
 
 const PLAN_COMPTABLE_SYSCOHADA = [
@@ -271,6 +272,49 @@ const PLAN_COMPTABLE_SYCEBNL_ADDITIONS = [
   {numero:"653",libelle:"Missions et deplacements projet",classe:6,type:"Gestion",sens:"Debit",sycebnl:true},
 ];
 
+
+// SYCEBNL Classe 9 — Contributions volontaires en nature (AUDCIF Art. 28)
+const PLAN_COMPTABLE_SYCEBNL_CLASSE9 = [
+  {numero:"91",libelle:"Contributions volontaires — emplois",classe:9,type:"Gestion",sens:"Debit",sycebnl:true},
+  {numero:"910",libelle:"Benevoles — emplois valorises",classe:9,type:"Gestion",sens:"Debit",sycebnl:true},
+  {numero:"911",libelle:"Mises a disposition de personnel",classe:9,type:"Gestion",sens:"Debit",sycebnl:true},
+  {numero:"912",libelle:"Mises a disposition de biens",classe:9,type:"Gestion",sens:"Debit",sycebnl:true},
+  {numero:"913",libelle:"Prestations de services gratuites",classe:9,type:"Gestion",sens:"Debit",sycebnl:true},
+  {numero:"92",libelle:"Contributions volontaires — ressources",classe:9,type:"Gestion",sens:"Credit",sycebnl:true},
+  {numero:"920",libelle:"Benevoles — ressources valorisees",classe:9,type:"Gestion",sens:"Credit",sycebnl:true},
+  {numero:"921",libelle:"Contributions en personnel exterieur",classe:9,type:"Gestion",sens:"Credit",sycebnl:true},
+  {numero:"922",libelle:"Contributions en biens et services",classe:9,type:"Gestion",sens:"Credit",sycebnl:true},
+  {numero:"923",libelle:"Dons en nature valorises",classe:9,type:"Gestion",sens:"Credit",sycebnl:true},
+];
+
+// Soldes d'ouverture (N-1) — indexes par numero de compte
+const OPENING_BALANCES = {
+  // SYSCOHADA demo — WASI Ecosystem SAS
+  "101":  {n1d:0,       n1c:10000000},
+  "111":  {n1d:0,       n1c:1200000},
+  "121":  {n1d:0,       n1c:850000},
+  "141":  {n1d:0,       n1c:3000000},
+  "162":  {n1d:0,       n1c:15000000},
+  "211":  {n1d:2500000, n1c:0},
+  "244":  {n1d:4800000, n1c:0},
+  "245":  {n1d:6200000, n1c:0},
+  "281":  {n1d:0,       n1c:1200000},
+  "284":  {n1d:0,       n1c:3100000},
+  "401":  {n1d:0,       n1c:4200000},
+  "411":  {n1d:3800000, n1c:0},
+  "421":  {n1d:0,       n1c:920000},
+  "444":  {n1d:0,       n1c:680000},
+  "521":  {n1d:12500000,n1c:0},
+  "571":  {n1d:450000,  n1c:0},
+  // SYCEBNL demo — WASI Foundation
+  "131":  {n1d:0,       n1c:8000000},
+  "132":  {n1d:0,       n1c:2500000},
+  "451":  {n1d:1200000, n1c:0},
+  "452":  {n1d:3400000, n1c:0},
+  "453":  {n1d:2100000, n1c:0},
+  "920":  {n1d:0,       n1c:1200000},
+  "910":  {n1d:1200000, n1c:0},
+};
 // Journal codes
 const JOURNAL_CODES = [
   { code: "AC", label: "Journal des achats" },
@@ -284,7 +328,21 @@ const JOURNAL_CODES = [
 ];
 
 // Sample journal entries for demo
-const SAMPLE_JOURNAL = [];
+const SAMPLE_JOURNAL = [
+  // Ecritures de demo — equilibrees
+  {id:1,date:"2026-01-05",journal:"BQ",piece:"BQ-001",compte:"521",libelle:"Virement client WASI Corp",debit:5000000,credit:0,ref:"VIR-001"},
+  {id:2,date:"2026-01-05",journal:"BQ",piece:"BQ-001",compte:"411",libelle:"Virement client WASI Corp",debit:0,credit:5000000,ref:"VIR-001"},
+  {id:3,date:"2026-01-10",journal:"AC",piece:"FA-001",compte:"601",libelle:"Achat marchandises fournisseur Alpha",debit:2400000,credit:0,ref:"FA-2026-001"},
+  {id:4,date:"2026-01-10",journal:"AC",piece:"FA-001",compte:"401",libelle:"Fournisseur Alpha — FA-2026-001",debit:0,credit:2400000,ref:"FA-2026-001"},
+  {id:5,date:"2026-01-15",journal:"VT",piece:"FV-001",compte:"411",libelle:"Vente produits client Kofi Diallo",debit:3800000,credit:0,ref:"FV-2026-001"},
+  {id:6,date:"2026-01-15",journal:"VT",piece:"FV-001",compte:"701",libelle:"Produits vendus — FV-2026-001",debit:0,credit:3800000,ref:"FV-2026-001"},
+  {id:7,date:"2026-01-31",journal:"SA",piece:"SA-001",compte:"661",libelle:"Salaires janvier 2026",debit:1800000,credit:0,ref:"SA-2026-01"},
+  {id:8,date:"2026-01-31",journal:"SA",piece:"SA-001",compte:"421",libelle:"Remuneration personnel janv. 2026",debit:0,credit:1800000,ref:"SA-2026-01"},
+  {id:9,date:"2026-02-28",journal:"OD",piece:"OD-001",compte:"681",libelle:"Dotation amortissement materiel Q1",debit:420000,credit:0,ref:"INV-2026"},
+  {id:10,date:"2026-02-28",journal:"OD",piece:"OD-001",compte:"284",libelle:"Amort. cumulee materiel Q1",debit:0,credit:420000,ref:"INV-2026"},
+  {id:11,date:"2026-03-15",journal:"BQ",piece:"BQ-002",compte:"401",libelle:"Reglement fournisseur Alpha",debit:2400000,credit:0,ref:"BQ-2026-002"},
+  {id:12,date:"2026-03-15",journal:"BQ",piece:"BQ-002",compte:"521",libelle:"Debit banque — fournisseur Alpha",debit:0,credit:2400000,ref:"BQ-2026-002"},
+];
 
 // OHADA financial statement blocks
 const BILAN_STRUCTURE = {
@@ -317,6 +375,31 @@ const RESULTAT_STRUCTURE = [
   { section: "PARTICIPATION TRAVAILLEURS", comptes: ["87"], sens: "debit" },
   { section: "IMPOT SUR LE RESULTAT", comptes: ["89"], sens: "debit" },
 ];
+
+// SYCEBNL Compte de Resultat — structure officielle PAO / CAO
+const RESULTAT_SYCEBNL_STRUCTURE = {
+  pao: [
+    {ref:"RA",label:"Cotisations et contributions des membres",comptes:["744"],sens:"credit"},
+    {ref:"RB",label:"Dons en especes et legs",comptes:["742"],sens:"credit"},
+    {ref:"RC",label:"Dons en nature valorises",comptes:["741"],sens:"credit"},
+    {ref:"RD",label:"Subventions de fonctionnement recues",comptes:["711"],sens:"credit"},
+    {ref:"RE",label:"Subventions de projets recues",comptes:["743"],sens:"credit"},
+    {ref:"RF",label:"Produits de la vente de biens et services",comptes:["701","706"],sens:"credit"},
+    {ref:"RG",label:"Revenus financiers",comptes:["77"],sens:"credit"},
+    {ref:"RH",label:"Produits HAO",comptes:["82","84"],sens:"credit"},
+    {ref:"RI",label:"Autres produits",comptes:["75","72"],sens:"credit"},
+  ],
+  cao: [
+    {ref:"EA",label:"Achats de biens et fournitures",comptes:["601","604","605"],sens:"debit"},
+    {ref:"EB",label:"Transports et deplacements",comptes:["61","653"],sens:"debit"},
+    {ref:"EC",label:"Services exterieurs",comptes:["62","63"],sens:"debit"},
+    {ref:"ED",label:"Charges liees aux projets",comptes:["651","652"],sens:"debit"},
+    {ref:"EE",label:"Impots et taxes",comptes:["64"],sens:"debit"},
+    {ref:"EF",label:"Charges de personnel",comptes:["66"],sens:"debit"},
+    {ref:"EG",label:"Dotations aux amortissements",comptes:["68"],sens:"debit"},
+    {ref:"EH",label:"Charges financieres et HAO",comptes:["67","81","83","85","87","89"],sens:"debit"},
+  ]
+};
 
 // OHADA member states
 const OHADA_MEMBER_STATES = [

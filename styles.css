@@ -98,6 +98,7 @@ a { color: var(--gold); text-decoration: none; }
 .class-6 { background: rgba(255,82,82,0.15); color: var(--red); }
 .class-7 { background: rgba(0,230,118,0.15); color: var(--green); }
 .class-8 { background: rgba(167,139,250,0.15); color: #a78bfa; }
+.class-9 { background: rgba(100,255,218,0.12); color: #64FFDA; }
 
 /* Grid layouts */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
