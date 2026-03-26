@@ -415,7 +415,7 @@ const OHADA_GUIDE = {
     },
     {
       title: "Etats financiers obligatoires",
-      content: "Le systeme normal OHADA exige: 1) Bilan, 2) Compte de resultat, 3) TAFIRE (Tableau Financier des Ressources et Emplois), 4) Notes annexes. Le systeme minimal de tresorerie (SMT) est reserve aux tres petites entites."
+      content: "Le systeme normal OHADA revise exige notamment: 1) Bilan, 2) Compte de resultat, 3) Tableau de flux de tresorerie (TFT), 4) Notes annexes. Le systeme minimal de tresorerie (SMT) est reserve aux tres petites entites."
     },
     {
       title: "Principes comptables OHADA",

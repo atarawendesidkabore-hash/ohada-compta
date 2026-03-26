@@ -297,7 +297,7 @@ function getDsfStatusRows() {
   return [
     { code: "DSF-01", label: "Bilan — Systeme normal", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Disponible a partir des soldes charges." : "Chargez une balance ou des ecritures." },
     { code: "DSF-02", label: "Compte de resultat — Systeme normal", status: hasJournal ? "Pret" : hasBalances ? "A completer" : "En attente", hint: hasJournal ? "Les mouvements de l'exercice sont disponibles." : "Ajoutez les ecritures de l'exercice." },
-    { code: "DSF-03", label: "TAFIRE", status: hasJournal ? "A completer" : "En attente", hint: "Necessite les flux de l'exercice et la revue de cloture." },
+    { code: "DSF-03", label: "Tableau de flux de tresorerie", status: hasJournal ? "A completer" : "En attente", hint: "Necessite les flux de l'exercice et la revue de cloture." },
     { code: "DSF-04", label: "Tableau des immobilisations", status: hasImmos ? "A completer" : "En attente", hint: hasImmos ? "Des immobilisations ont ete detectees." : "Aucune immobilisation detectee." },
     { code: "DSF-05", label: "Tableau des amortissements", status: hasImmos ? "A completer" : "En attente", hint: hasImmos ? "Prevoir les dotations et cumuls." : "Aucune base amortissable detectee." },
     { code: "DSF-06", label: "Tableau des provisions", status: hasJournal ? "A completer" : "En attente", hint: "A completer selon vos ecritures d'inventaire." },
@@ -418,6 +418,43 @@ function getResultatExportRows() {
   return rows;
 }
 
+function getFluxTresorerieExportRows() {
+  const bal = computeBalances();
+  let tresorerieOuverture = 0;
+  let tresorerieCloture = 0;
+  let dotations = 0;
+  let resultatNet = 0;
+
+  Object.keys(bal).forEach(code => {
+    const openingNet = (bal[code].n1d || 0) - (bal[code].n1c || 0);
+    const closingNet = (bal[code].debit || 0) - (bal[code].credit || 0);
+    const mvtD = (bal[code].debit || 0) - (bal[code].n1d || 0);
+    const mvtC = (bal[code].credit || 0) - (bal[code].n1c || 0);
+
+    if (code.startsWith("5")) {
+      tresorerieOuverture += openingNet;
+      tresorerieCloture += closingNet;
+    }
+
+    if (code.startsWith("68")) dotations += mvtD - mvtC;
+    if (code.startsWith("7") || code.startsWith("82") || code.startsWith("84")) resultatNet += mvtC - mvtD;
+    if (code.startsWith("6") || code.startsWith("81") || code.startsWith("83") || code.startsWith("85") || code.startsWith("87") || code.startsWith("89")) resultatNet -= (mvtD - mvtC);
+  });
+
+  return [
+    ["TABLEAU DE FLUX DE TRESORERIE (TFT) — Synthese preparatoire"],
+    [""],
+    ["Ligne", "Montant (XOF)", "Observation"],
+    ["Tresorerie a l'ouverture", tresorerieOuverture, "Solde net des comptes de tresorerie a l'ouverture."],
+    ["Tresorerie a la cloture", tresorerieCloture, "Solde net des comptes de tresorerie a la cloture."],
+    ["Variation nette de tresorerie", tresorerieCloture - tresorerieOuverture, "Variation brute observee entre l'ouverture et la cloture."],
+    ["Resultat net de l'exercice", resultatNet, "Base de travail pour les flux operationnels."],
+    ["Dotations aux amortissements", dotations, "Retraitees dans la construction detaillee du TFT."],
+    [""],
+    ["Note", "", "Le SYSCOHADA revise remplace le TAFIRE par le Tableau de flux de tresorerie. Cette feuille constitue une base preparatoire et doit etre completee avant depot officiel."],
+  ];
+}
+
 function getAmortissementExportRows() {
   const bal = computeBalances();
   const plan = getPlan();
@@ -517,9 +554,13 @@ function downloadBfaLiasseFiscale() {
   appendWorkbookSheet(workbook, "Balance", getBalanceExportRows(), [14, 36, 10, 16, 16, 16, 16, 16, 16]);
   appendWorkbookSheet(workbook, "Bilan", getBilanExportRows(), [30, 18, 6, 30, 18]);
   appendWorkbookSheet(workbook, "Resultat", getResultatExportRows(), [42, 16, 20]);
+  appendWorkbookSheet(workbook, "FluxTresorerie", getFluxTresorerieExportRows(), [38, 18, 70], 2);
   appendWorkbookSheet(workbook, "Amortissements", getAmortissementExportRows(), [12, 36, 14, 10, 10, 14, 14, 14, 14]);
   appendWorkbookSheet(workbook, "Annexes", [
     ["Notes annexes"],
+    [""],
+    ["Rappel OHADA", "Le Systeme normal du SYSCOHADA revise comprend quarante-six (46) tableaux en notes annexes."],
+    ["Portee du classeur", "Cette feuille recense un noyau de notes preparatoires a completer avant depot."],
     [""],
     ["Note 1", "Regles et methodes comptables"],
     ["Note 2", "Immobilisations incorporelles et corporelles"],
@@ -701,7 +742,7 @@ function renderDashboard() {
           ? "Le SYCEBNL s'applique aux entites a but non lucratif: associations, ONG, fondations, syndicats. Il inclut des comptes specifiques pour les fonds dedies (classe 1), les donateurs et bailleurs (classe 4), et les dons/contributions (classe 7)."
           : "Le SYSCOHADA revise s'applique a toutes les entites a but lucratif des 17 Etats membres de l'OHADA. Il est conforme a l'Acte Uniforme AUDCIF et structure en 8 classes de comptes."
         }<br><br>
-        <strong>Etats financiers:</strong> Bilan | Compte de resultat | TAFIRE | Notes annexes<br>
+        <strong>Etats financiers:</strong> Bilan | Compte de resultat | Tableau de flux de tresorerie (TFT) | Notes annexes<br>
         <strong>Pays membres:</strong> ${OHADA_MEMBER_STATES.join(", ")}
       </div>
     </div>
@@ -1238,37 +1279,34 @@ resultat>=0?'Benefice':'Perte'}: ${fmt(Math.abs(resultat))} XOF</td>
   `;
 }
 // ═══════════════════════════════════════════════════════════
-// TAFIRE
+// FLUX DE TRESORERIE (legacy tab key: tafire)
 // ═══════════════════════════════════════════════════════════
 function renderTafire() {
   return `
     <div class="card">
-      <div class="card-header"><div class="card-title">TAFIRE — Tableau Financier des Ressources et Emplois</div></div>
+      <div class="card-header"><div class="card-title">Tableau de flux de tresorerie (TFT)</div></div>
       <div class="info-box">
-        Le TAFIRE est l'etat financier OHADA equivalent au tableau des flux de tresorerie. Il presente les flux de ressources et d'emplois en deux parties:<br><br>
-        <strong>Partie I:</strong> Determination des soldes financiers de l'exercice (CAF, variation BFR, ETE)<br>
-        <strong>Partie II:</strong> Tableau des emplois et ressources (investissements, financements, variation de tresorerie)<br><br>
-        <em>Le calcul automatique sera disponible apres cloture de l'exercice avec les donnees completes.</em>
+        Dans le SYSCOHADA revise, le <strong>Tableau de flux de tresorerie (TFT)</strong> remplace le TAFIRE dans le jeu d'etats financiers du systeme normal.<br><br>
+        Cette page sert de base preparatoire pour suivre les flux de tresorerie de l'exercice avant production du tableau detaille conforme.<br><br>
+        <em>Le calcul automatique complet du TFT sera affine apres cloture de l'exercice avec les donnees completes.</em>
       </div>
       <div class="grid-2" style="margin-top:16px;">
         <div class="card" style="border-color:var(--green);">
-          <div style="color:var(--green);font-weight:700;margin-bottom:8px;">RESSOURCES</div>
+          <div style="color:var(--green);font-weight:700;margin-bottom:8px;">FLUX POSITIFS</div>
           <div style="font-size:0.84rem;color:var(--muted);line-height:1.8;">
-            Capacite d'Autofinancement Globale (CAFG)<br>
-            Cessions et reductions d'immobilisations<br>
-            Augmentations de capitaux propres<br>
-            Augmentations de dettes financieres<br>
-            Diminution du BFR<br>
+            Flux de tresorerie lies aux activites operationnelles<br>
+            Encaissements sur cessions d'immobilisations<br>
+            Flux de financement recus<br>
+            Augmentation nette de tresorerie<br>
           </div>
         </div>
         <div class="card" style="border-color:var(--red);">
-          <div style="color:var(--red);font-weight:700;margin-bottom:8px;">EMPLOIS</div>
+          <div style="color:var(--red);font-weight:700;margin-bottom:8px;">FLUX NEGATIFS</div>
           <div style="font-size:0.84rem;color:var(--muted);line-height:1.8;">
+            Decaissements d'exploitation<br>
             Investissements (acquisitions d'immobilisations)<br>
             Remboursements de dettes financieres<br>
-            Dividendes distribues<br>
-            Augmentation du BFR<br>
-            Variation de tresorerie<br>
+            Diminution nette de tresorerie<br>
           </div>
         </div>
       </div>
@@ -1383,7 +1421,7 @@ function renderAnnexes() {
     <div class="card">
       <div class="card-header"><div class="card-title">Notes annexes aux etats financiers</div></div>
       <div class="info-box" style="margin-bottom:16px;">
-        Les notes annexes font partie integrante des etats financiers OHADA. Elles completent et commentent les informations des autres etats financiers.
+        Les notes annexes font partie integrante des etats financiers OHADA. Pour le systeme normal du SYSCOHADA revise, l'elaboration complete comprend quarante-six (46) tableaux en notes annexes. La liste ci-dessous constitue une base preparatoire a enrichir pour atteindre le dossier complet.
       </div>
       <div class="stack">
         ${[
@@ -1457,7 +1495,7 @@ function renderCloture() {
         2. <strong>Ecritures de regularisation</strong> — Amortissements, provisions, charges constatees d'avance<br>
         3. <strong>Balance apres inventaire</strong> — Verification de l'equilibre<br>
         4. <strong>Determination du resultat</strong> — Solde des comptes de gestion<br>
-        5. <strong>Etablissement des etats financiers</strong> — Bilan, Resultat, TAFIRE, Annexes<br>
+        5. <strong>Etablissement des etats financiers</strong> — Bilan, Resultat, Tableau de flux de tresorerie, Annexes<br>
         6. <strong>Ecritures de cloture</strong> — A-nouveaux pour l'exercice suivant<br>
         7. <strong>Declaration DSF/DGI</strong> — Liasse fiscale obligatoire
       </div>
@@ -1551,9 +1589,9 @@ function renderComparaison() {
             ["Classe 7 — spec.", "Ventes, prestations", "Dons, contributions, cotisations (74x)"],
             ["Classe 6 — spec.", "Charges standard", "Charges liees aux projets (65x)"],
             ["Resultat", "Benefice / Perte", "Excedent / Deficit"],
-            ["TAFIRE", "Obligatoire (systeme normal)", "Adapte aux flux de projets"],
+            ["Tableau de flux / Emplois-Ressources", "Tableau de flux de tresorerie (TFT)", "TFT pour associations; tableaux emplois/ressources pour projets"],
             ["DSF / DGI", "Liasse fiscale standard", "Liasse adaptee EBNL"],
-            ["Etats financiers", "Bilan, Resultat, TAFIRE, Annexes", "Idem avec adaptations EBNL"],
+            ["Etats financiers", "Bilan, Resultat, TFT, Annexes", "Jeu adapte selon la categorie EBNL"],
             ["Nombre de comptes", `${PLAN_COMPTABLE_SYSCOHADA.length}`, `${PLAN_COMPTABLE_SYSCOHADA.length + PLAN_COMPTABLE_SYCEBNL_ADDITIONS.length} (avec ajouts)`],
             ["Pays applicables", "17 Etats membres OHADA", "17 Etats membres OHADA"],
           ].map(([crit, sys, bnl]) => `
