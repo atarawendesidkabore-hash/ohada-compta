@@ -287,36 +287,8 @@ const PLAN_COMPTABLE_SYCEBNL_CLASSE9 = [
   {numero:"923",libelle:"Dons en nature valorises",classe:9,type:"Gestion",sens:"Credit",sycebnl:true},
 ];
 
-// Soldes d'ouverture (N-1) — indexes par numero de compte
-const OPENING_BALANCES = {
-  // SYSCOHADA demo — WASI Ecosystem SAS
-  "101":  {n1d:0,       n1c:10000000},
-  "111":  {n1d:0,       n1c:1200000},
-  "121":  {n1d:0,       n1c:850000},
-  "141":  {n1d:0,       n1c:3000000},
-  "162":  {n1d:0,       n1c:5100000},
-  "211":  {n1d:2500000, n1c:0},
-  "244":  {n1d:4800000, n1c:0},
-  "245":  {n1d:6200000, n1c:0},
-  "281":  {n1d:0,       n1c:1200000},
-  "284":  {n1d:0,       n1c:3100000},
-  "401":  {n1d:0,       n1c:4200000},
-  "411":  {n1d:3800000, n1c:0},
-  "421":  {n1d:0,       n1c:920000},
-  "444":  {n1d:0,       n1c:680000},
-  "521":  {n1d:12500000,n1c:0},
-  "571":  {n1d:450000,  n1c:0},
-  // SYCEBNL demo — WASI Foundation
-  "131":  {n1d:0,       n1c:8000000},
-  "132":  {n1d:0,       n1c:2500000},
-  "451":  {n1d:1200000, n1c:0},
-  "452":  {n1d:3400000, n1c:0},
-  "453":  {n1d:2100000, n1c:0},
-  "920":  {n1d:0,       n1c:1200000},
-  "910":  {n1d:1200000, n1c:0},
-};
-// Snapshot for logout reset (do not modify)
-const DEFAULT_OPENING_BALANCES = Object.assign({}, OPENING_BALANCES);
+// Soldes d'ouverture (N-1) — vides par defaut pour un deploiement en production
+const OPENING_BALANCES = {};
 // Journal codes
 const JOURNAL_CODES = [
   { code: "AC", label: "Journal des achats" },
@@ -327,23 +299,6 @@ const JOURNAL_CODES = [
   { code: "AN", label: "A nouveaux" },
   { code: "EX", label: "Cloture exercice" },
   { code: "SA", label: "Journal des salaires" },
-];
-
-// Sample journal entries for demo
-const SAMPLE_JOURNAL = [
-  // Ecritures de demo — equilibrees
-  {id:1,date:"2026-01-05",journal:"BQ",piece:"BQ-001",compte:"521",libelle:"Virement client WASI Corp",debit:5000000,credit:0,ref:"VIR-001"},
-  {id:2,date:"2026-01-05",journal:"BQ",piece:"BQ-001",compte:"411",libelle:"Virement client WASI Corp",debit:0,credit:5000000,ref:"VIR-001"},
-  {id:3,date:"2026-01-10",journal:"AC",piece:"FA-001",compte:"601",libelle:"Achat marchandises fournisseur Alpha",debit:2400000,credit:0,ref:"FA-2026-001"},
-  {id:4,date:"2026-01-10",journal:"AC",piece:"FA-001",compte:"401",libelle:"Fournisseur Alpha — FA-2026-001",debit:0,credit:2400000,ref:"FA-2026-001"},
-  {id:5,date:"2026-01-15",journal:"VT",piece:"FV-001",compte:"411",libelle:"Vente produits client Kofi Diallo",debit:3800000,credit:0,ref:"FV-2026-001"},
-  {id:6,date:"2026-01-15",journal:"VT",piece:"FV-001",compte:"701",libelle:"Produits vendus — FV-2026-001",debit:0,credit:3800000,ref:"FV-2026-001"},
-  {id:7,date:"2026-01-31",journal:"SA",piece:"SA-001",compte:"661",libelle:"Salaires janvier 2026",debit:1800000,credit:0,ref:"SA-2026-01"},
-  {id:8,date:"2026-01-31",journal:"SA",piece:"SA-001",compte:"421",libelle:"Remuneration personnel janv. 2026",debit:0,credit:1800000,ref:"SA-2026-01"},
-  {id:9,date:"2026-02-28",journal:"OD",piece:"OD-001",compte:"681",libelle:"Dotation amortissement materiel Q1",debit:420000,credit:0,ref:"INV-2026"},
-  {id:10,date:"2026-02-28",journal:"OD",piece:"OD-001",compte:"284",libelle:"Amort. cumulee materiel Q1",debit:0,credit:420000,ref:"INV-2026"},
-  {id:11,date:"2026-03-15",journal:"BQ",piece:"BQ-002",compte:"401",libelle:"Reglement fournisseur Alpha",debit:2400000,credit:0,ref:"BQ-2026-002"},
-  {id:12,date:"2026-03-15",journal:"BQ",piece:"BQ-002",compte:"521",libelle:"Debit banque — fournisseur Alpha",debit:0,credit:2400000,ref:"BQ-2026-002"},
 ];
 
 // OHADA financial statement blocks

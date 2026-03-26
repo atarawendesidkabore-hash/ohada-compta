@@ -4,10 +4,19 @@
 let currentTab = "dashboard";
 let currentRef = "syscohada";
 let sycebnlType = "associations"; // 'associations' or 'projets'
-let journalEntries = [...SAMPLE_JOURNAL];
+let journalEntries = [];
 let searchTerm = "";
 let filterClass = null;
 let currentCompanyDetails = {};
+
+function hasCompanyProfileData() {
+  return Object.values(currentCompanyDetails).some((value) => String(value || "").trim() !== "");
+}
+
+function isCompanyProfileComplete() {
+  return ["raisonSociale", "formeJuridique", "nif", "siegeSocial", "pays", "exerciceDu", "exerciceAu"]
+    .every((key) => String(currentCompanyDetails[key] || "").trim() !== "");
+}
 
 // ═══════════════════════════════════════════════════════════
 // ACCOUNT MANAGEMENT (multi-company, localStorage)
@@ -91,11 +100,14 @@ function logoutCompany() {
   currentCompanyId = null;
   localStorage.removeItem(SESSION_KEY);
   // Reset app state to defaults
-  journalEntries = [...SAMPLE_JOURNAL];
+  journalEntries = [];
   Object.keys(OPENING_BALANCES).forEach(k => delete OPENING_BALANCES[k]);
-  Object.assign(OPENING_BALANCES, DEFAULT_OPENING_BALANCES);
   currentRef = 'syscohada';
   sycebnlType = 'associations';
+  currentCompanyDetails = {};
+  currentTab = 'dashboard';
+  searchTerm = "";
+  filterClass = null;
   const sel = document.getElementById('referentiel-select');
   if (sel) sel.value = 'syscohada';
   // Hide topbar elements
@@ -199,16 +211,19 @@ function closeMobileMenu() {
 if (mobileBtn) mobileBtn.addEventListener("click", openMobileMenu);
 if (mobileOverlay) mobileOverlay.addEventListener("click", closeMobileMenu);
 
+function navigateToTab(tab) {
+  const target = document.querySelector(`.nav-btn[data-tab="${tab}"]`);
+  if (!target) return;
+  document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
+  currentTab = tab;
+  closeMobileMenu();
+  render();
+  window.scrollTo(0, 0);
+}
+
 // Navigation
 document.querySelectorAll(".nav-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    currentTab = btn.dataset.tab;
-    closeMobileMenu();
-    render();
-    window.scrollTo(0, 0);
-  });
+  btn.addEventListener("click", () => navigateToTab(btn.dataset.tab));
 });
 
 function getPlan() {
@@ -292,6 +307,10 @@ function renderDashboard() {
   const acct = currentCompanyId ? accounts.find(a => a.id === currentCompanyId) : null;
   const compName = currentCompanyDetails.raisonSociale || (acct ? acct.company : '');
   const capital = parseFloat(currentCompanyDetails.capitalSocial) || 0;
+  const hasOpeningBalances = Object.keys(OPENING_BALANCES).length > 0;
+  const hasProfile = hasCompanyProfileData();
+  const profileComplete = isCompanyProfileComplete();
+  const needsSetup = !profileComplete || !hasOpeningBalances || journalEntries.length === 0;
 
   // Financial ratios from balance
   let totalActifNet = 0, totalPassif = 0, totalProduits = 0, totalCharges = 0;
@@ -314,6 +333,41 @@ function renderDashboard() {
 
   return `
     ${compName ? `<div class="company-header"><div class="company-header-name">${compName}</div><div class="company-header-meta">${currentCompanyDetails.formeJuridique ? currentCompanyDetails.formeJuridique+' &bull; ' : ''}${currentCompanyDetails.siegeSocial || ''}${currentCompanyDetails.nif ? ' &bull; NIF: '+currentCompanyDetails.nif : ''}${currentCompanyDetails.rccm ? ' &bull; RCCM: '+currentCompanyDetails.rccm : ''}${currentCompanyDetails.exerciceDu ? ' &bull; Exercice: '+currentCompanyDetails.exerciceDu.slice(0,4) : ''}</div></div>` : ''}
+    ${needsSetup ? `
+    <div class="card" style="margin-bottom:20px;border-color:rgba(200,146,42,0.35);">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Espace de production initialise a vide</div>
+          <div class="card-subtitle">Aucune donnee prechargee n'est presente. Terminez la configuration pour preparer vos etats OHADA.</div>
+        </div>
+      </div>
+      <div class="grid-3">
+        <div class="card" style="background:var(--surface2);border-color:rgba(68,138,255,0.22);">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px;">
+            <strong>Fiche entreprise</strong>
+            <span style="font-size:0.74rem;font-weight:700;color:${profileComplete ? 'var(--green)' : hasProfile ? 'var(--orange)' : 'var(--muted)'};">${profileComplete ? 'Complete' : hasProfile ? 'A completer' : 'A renseigner'}</span>
+          </div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Renseignez la raison sociale, le NIF, l'exercice et les informations legales.</div>
+          <button class="btn btn-outline" style="width:100%;" onclick="navigateToTab('parametres')">Ouvrir les parametres</button>
+        </div>
+        <div class="card" style="background:var(--surface2);border-color:rgba(0,229,118,0.2);">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px;">
+            <strong>Balance d'ouverture</strong>
+            <span style="font-size:0.74rem;font-weight:700;color:${hasOpeningBalances ? 'var(--green)' : 'var(--muted)'};">${hasOpeningBalances ? 'Chargee' : 'Vide'}</span>
+          </div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Importez une balance CSV ou saisissez vos soldes avant d'editer le bilan.</div>
+          <button class="btn btn-outline" style="width:100%;" onclick="navigateToTab('balance')">Importer ou verifier</button>
+        </div>
+        <div class="card" style="background:var(--surface2);border-color:rgba(255,145,0,0.24);">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px;">
+            <strong>Journal general</strong>
+            <span style="font-size:0.74rem;font-weight:700;color:${journalEntries.length > 0 ? 'var(--green)' : 'var(--muted)'};">${journalEntries.length > 0 ? `${journalEntries.length} ecritures` : 'Aucune ecriture'}</span>
+          </div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Ajoutez vos ecritures ou importez vos mouvements pour produire les etats financiers.</div>
+          <button class="btn btn-gold" style="width:100%;" onclick="navigateToTab('saisie')">Saisir une ecriture</button>
+        </div>
+      </div>
+    </div>` : ''}
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-label">Referentiel</div><div class="kpi-value" style="font-size:1.2rem;color:var(--gold);">${refLabel}</div><div class="kpi-note">Norme en vigueur</div></div>
       <div class="kpi"><div class="kpi-label">Comptes</div><div class="kpi-value">${plan.length}</div><div class="kpi-note">Plan comptable actif</div></div>
@@ -442,8 +496,17 @@ function renderJournal() {
           <div class="card-title">Journal general</div>
           <div class="card-subtitle">${journalEntries.length} ecritures | Equilibre: ${totalD === totalC ? 'OK' : 'ERREUR'}</div>
         </div>
-        <button class="btn btn-gold" onclick="document.querySelectorAll('.nav-btn').forEach(b=>{if(b.dataset.tab==='saisie'){b.click();}});">+ Nouvelle ecriture</button>
+        <button class="btn btn-gold" onclick="navigateToTab('saisie')">+ Nouvelle ecriture</button>
       </div>
+      ${journalEntries.length === 0 ? `
+        <div class="info-box">
+          Le journal est vide. Saisissez votre premiere ecriture ou importez une balance d'ouverture pour demarrer sur un dossier de production.
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+            <button class="btn btn-gold" onclick="navigateToTab('saisie')">Saisir une ecriture</button>
+            <button class="btn btn-outline" onclick="navigateToTab('balance')">Importer une balance</button>
+          </div>
+        </div>
+      ` : `
       <div style="overflow-x:auto;">
         <table class="data-table">
           <thead><tr><th>Date</th><th>Journal</th><th>Piece</th><th>Compte</th><th>Libelle</th><th style="text-align:right;">Debit</th><th style="text-align:right;">Credit</th><th>Ref</th></tr></thead>
@@ -469,6 +532,7 @@ function renderJournal() {
           </tbody>
         </table>
       </div>
+      `}
     </div>
   `;
 }
@@ -480,6 +544,19 @@ function renderGrandLivre() {
   const bal = computeBalances();
   const plan = getPlan();
   const comptes = Object.keys(bal).sort();
+
+  if (comptes.length === 0) {
+    return `
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Grand livre</div>
+        </div>
+        <div class="info-box">
+          Aucun compte n'a encore de solde ou de mouvement. Le grand livre se generera automatiquement apres l'import de la balance d'ouverture ou la saisie des ecritures.
+        </div>
+      </div>
+    `;
+  }
 
   return `
     <div class="card">
@@ -555,6 +632,11 @@ function renderBalance() {
           <button class="btn btn-outline" style="font-size:0.78rem;" onclick="downloadBalanceTemplate()">Modele CSV</button>
         </div>
       </div>
+      ${comptes.length === 0 ? `
+        <div class="info-box">
+          La balance est vide. Importez un fichier CSV de soldes d'ouverture ou commencez par passer des ecritures pour alimenter automatiquement cette vue.
+        </div>
+      ` : `
       <div style="overflow-x:auto;">
         <table class="data-table">
           <thead>
@@ -594,6 +676,7 @@ function renderBalance() {
           </tbody>
         </table>
       </div>
+      `}
     </div>
   `;
 }
@@ -623,6 +706,7 @@ function downloadBalanceTemplate() {
 // ═══════════════════════════════════════════════════════════
 function renderBilan() {
   const bal = computeBalances();
+  const hasBalances = Object.keys(bal).length > 0;
 
   // sum debit-credit for a list of account prefixes (net value)
   function sumByPrefix(prefixes) {
@@ -672,6 +756,7 @@ function renderBilan() {
         <div class="card-title">Bilan — ${currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise"}</div>
         <div class="card-subtitle" style="color:${isBalanced?'var(--green)':'var(--red)'};">Equilibre: ${isBalanced?'OK ✓':'ERREUR — ecart '+fmt(Math.abs(totalActif-totalPassif))}</div>
       </div>
+      ${!hasBalances ? `<div class="info-box" style="margin-bottom:16px;">Aucune donnee comptable n'est encore disponible. Le bilan s'affichera automatiquement apres import des soldes d'ouverture ou saisie des ecritures.</div>` : ''}
       <div class="grid-2">
         <div>
           <div class="section-title">ACTIF (valeurs nettes)</div>
@@ -703,6 +788,7 @@ function renderBilan() {
 // ═══════════════════════════════════════════════════════════
 function renderResultat() {
   const bal = computeBalances();
+  const hasBalances = Object.keys(bal).length > 0;
 
   if (currentRef === "sycebnl") {
     // SYCEBNL — structure officielle AUDCIF
@@ -759,6 +845,7 @@ function renderResultat() {
             <button class="btn ${sycebnlType==="projets"?"btn-gold":"btn-outline"}" onclick="setSycebnlType('projets')">Projets</button>
           </div>
         </div>
+        ${!hasBalances ? `<div class="info-box" style="margin-bottom:16px;">Aucun mouvement n'est encore disponible pour produire le compte de resultat. Saisissez vos ecritures de l'exercice pour lancer le calcul.</div>` : ''}
 
         <div class="section-title" style="color:var(--green);margin-top:8px;">Revenus des Activites Ordinaires</div>
         <table class="data-table" style="margin-bottom:8px;">
@@ -846,6 +933,7 @@ function renderResultat() {
   return `
     <div class="card">
       <div class="card-header"><div class="card-title">Compte de resultat — SYSCOHADA Revise</div></div>
+      ${!hasBalances ? `<div class="info-box" style="margin-bottom:16px;">Aucun mouvement n'est encore disponible pour produire le compte de resultat. Saisissez vos ecritures de l'exercice pour lancer le calcul.</div>` : ''}
       <table class="data-table">
         <thead><tr><th>Section</th><th>Type</th><th style="text-align:right;">Montant (XOF)</th></tr></thead>
         <tbody>
@@ -1104,31 +1192,51 @@ function renderCloture() {
 // DSF / DGI
 // ═══════════════════════════════════════════════════════════
 function renderDSF() {
+  const bal = computeBalances();
+  const hasBalances = Object.keys(bal).length > 0;
+  const hasJournal = journalEntries.length > 0;
+  const hasImmos = Object.keys(bal).some((code) => code.startsWith("2") || code.startsWith("28"));
+  const hasTiers = Object.keys(bal).some((code) => code.startsWith("4"));
+  const profileComplete = isCompanyProfileComplete();
+  const packetName = currentRef === "sycebnl"
+    ? "Liasse fiscale adaptee EBNL"
+    : "BFA Liasse Fiscale Sys Normal SYSCOHADA Revise DGI-BF[254]";
+  const statuses = [
+    { code: "DSF-01", label: "Bilan — Systeme normal", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Disponible a partir des soldes charges." : "Chargez une balance ou des ecritures." },
+    { code: "DSF-02", label: "Compte de resultat — Systeme normal", status: hasJournal ? "Pret" : hasBalances ? "A completer" : "En attente", hint: hasJournal ? "Les mouvements de l'exercice sont disponibles." : "Ajoutez les ecritures de l'exercice." },
+    { code: "DSF-03", label: "TAFIRE", status: hasJournal ? "A completer" : "En attente", hint: "Necessite les flux de l'exercice et la revue de cloture." },
+    { code: "DSF-04", label: "Tableau des immobilisations", status: hasImmos ? "A completer" : "En attente", hint: hasImmos ? "Des immobilisations ont ete detectees." : "Aucune immobilisation detectee." },
+    { code: "DSF-05", label: "Tableau des amortissements", status: hasImmos ? "A completer" : "En attente", hint: hasImmos ? "Prevoir les dotations et cumuls." : "Aucune base amortissable detectee." },
+    { code: "DSF-06", label: "Tableau des provisions", status: hasJournal ? "A completer" : "En attente", hint: "A completer selon vos ecritures d'inventaire." },
+    { code: "DSF-07", label: "Etat des creances et dettes", status: hasTiers ? "A completer" : "En attente", hint: hasTiers ? "Des comptes de tiers sont presents." : "Aucun compte de tiers detecte." },
+    { code: "DSF-08", label: "Tableau des resultat et soldes intermediaires", status: hasJournal ? "A completer" : "En attente", hint: "Genere a partir des mouvements de gestion." },
+    { code: "DSF-09", label: "Notes annexes", status: hasBalances ? "A completer" : "En attente", hint: "Completez les notes en fonction des etats produits." },
+    { code: "DSF-10", label: "Informations complementaires DGI", status: profileComplete ? "A completer" : "En attente", hint: profileComplete ? "La fiche entreprise est prete pour la liasse." : "Renseignez les informations legales et fiscales." },
+  ];
+  const readyCount = statuses.filter((item) => item.status === "Pret").length;
+
+  function getStatusColor(status) {
+    if (status === "Pret") return "var(--green)";
+    if (status === "A completer") return "var(--orange)";
+    return "var(--muted)";
+  }
+
   return `
     <div class="card">
       <div class="card-header"><div class="card-title">Declaration Statistique et Fiscale (DSF)</div></div>
       <div class="info-box" style="margin-bottom:16px;">
-        La DSF est la declaration fiscale annuelle obligatoire dans les pays OHADA. Elle comprend la liasse comptable normalisee conforme au SYSCOHADA, transmise a la Direction Generale des Impots (DGI).
+        <strong>Packet cible:</strong> ${packetName}<br><br>
+        La DSF est la declaration fiscale annuelle obligatoire dans les pays OHADA. Elle comprend la liasse comptable normalisee conforme au SYSCOHADA, transmise a la Direction Generale des Impots (DGI). Etat d'avancement actuel: <strong>${readyCount}/${statuses.length}</strong> rubriques pretes.
       </div>
       <div class="stack">
-        ${[
-          { code: "DSF-01", label: "Bilan — Systeme normal", status: "Pret" },
-          { code: "DSF-02", label: "Compte de resultat — Systeme normal", status: "Pret" },
-          { code: "DSF-03", label: "TAFIRE", status: "En attente" },
-          { code: "DSF-04", label: "Tableau des immobilisations", status: "En attente" },
-          { code: "DSF-05", label: "Tableau des amortissements", status: "En attente" },
-          { code: "DSF-06", label: "Tableau des provisions", status: "En attente" },
-          { code: "DSF-07", label: "Etat des creances et dettes", status: "En attente" },
-          { code: "DSF-08", label: "Tableau des resultat et soldes intermediaires", status: "Pret" },
-          { code: "DSF-09", label: "Notes annexes", status: "En attente" },
-          { code: "DSF-10", label: "Informations complementaires DGI", status: "En attente" },
-        ].map(d => `
+        ${statuses.map(d => `
           <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);">
             <div>
               <span style="font-family:var(--mono);font-weight:700;color:var(--gold);margin-right:10px;">${d.code}</span>
               <span>${d.label}</span>
+              <div style="font-size:0.78rem;color:var(--muted);margin-top:4px;">${d.hint}</div>
             </div>
-            <span style="font-size:0.78rem;font-weight:700;color:${d.status === 'Pret' ? 'var(--green)' : 'var(--orange)'};">${d.status}</span>
+            <span style="font-size:0.78rem;font-weight:700;color:${getStatusColor(d.status)};">${d.status}</span>
           </div>
         `).join("")}
       </div>
@@ -1450,7 +1558,7 @@ function renderParametres() {
       <div class="grid-2">
         <div class="form-group">
           <div class="form-label">Raison sociale</div>
-          <input class="form-input" id="p-raisonSociale" value="${d.raisonSociale || (acct ? acct.company : '')}" placeholder="Ex: WASI Ecosystem SAS">
+          <input class="form-input" id="p-raisonSociale" value="${d.raisonSociale || (acct ? acct.company : '')}" placeholder="Nom officiel de l'entreprise">
         </div>
         <div class="form-group">
           <div class="form-label">Forme juridique</div>
@@ -1461,23 +1569,23 @@ function renderParametres() {
         </div>
         <div class="form-group">
           <div class="form-label">RCCM</div>
-          <input class="form-input" id="p-rccm" value="${d.rccm || ''}" placeholder="Ex: BF-OUA-2020-B-12345">
+          <input class="form-input" id="p-rccm" value="${d.rccm || ''}" placeholder="Numero RCCM">
         </div>
         <div class="form-group">
           <div class="form-label">NIF (Numero d'Identification Fiscale)</div>
-          <input class="form-input" id="p-nif" value="${d.nif || ''}" placeholder="Ex: 00123456A">
+          <input class="form-input" id="p-nif" value="${d.nif || ''}" placeholder="Numero d'identification fiscale">
         </div>
         <div class="form-group" style="grid-column:1/-1;">
           <div class="form-label">Siege social</div>
-          <input class="form-input" id="p-siegeSocial" value="${d.siegeSocial || ''}" placeholder="Ex: 12 Avenue Kwame Nkrumah, Ouagadougou, Burkina Faso">
+          <input class="form-input" id="p-siegeSocial" value="${d.siegeSocial || ''}" placeholder="Adresse du siege social">
         </div>
         <div class="form-group" style="grid-column:1/-1;">
           <div class="form-label">Activite principale</div>
-          <input class="form-input" id="p-activitePrincipale" value="${d.activitePrincipale || ''}" placeholder="Ex: Commerce general de produits alimentaires">
+          <input class="form-input" id="p-activitePrincipale" value="${d.activitePrincipale || ''}" placeholder="Description de l'activite principale">
         </div>
         <div class="form-group">
           <div class="form-label">Capital social (XOF)</div>
-          <input class="form-input" type="number" id="p-capitalSocial" value="${d.capitalSocial || ''}" placeholder="Ex: 10000000">
+          <input class="form-input" type="number" id="p-capitalSocial" value="${d.capitalSocial || ''}" placeholder="Montant du capital social">
         </div>
         <div class="form-group">
           <div class="form-label">Regime fiscal</div>
@@ -1488,7 +1596,7 @@ function renderParametres() {
         </div>
         <div class="form-group">
           <div class="form-label">Pays</div>
-          <input class="form-input" id="p-pays" value="${d.pays || ''}" placeholder="Ex: Burkina Faso">
+          <input class="form-input" id="p-pays" value="${d.pays || ''}" placeholder="Pays d'immatriculation">
         </div>
         <div class="form-group" style="display:flex;gap:12px;align-items:flex-end;">
           <div style="flex:1;">
@@ -1502,11 +1610,11 @@ function renderParametres() {
         </div>
         <div class="form-group">
           <div class="form-label">Telephone</div>
-          <input class="form-input" id="p-tel" value="${d.tel || ''}" placeholder="+226 XX XX XX XX">
+          <input class="form-input" id="p-tel" value="${d.tel || ''}" placeholder="Numero de telephone">
         </div>
         <div class="form-group">
           <div class="form-label">Email</div>
-          <input class="form-input" id="p-emailCompta" value="${d.emailCompta || (acct ? acct.email : '')}" placeholder="compta@entreprise.com">
+          <input class="form-input" id="p-emailCompta" value="${d.emailCompta || (acct ? acct.email : '')}" placeholder="Adresse email comptable">
         </div>
         <div class="form-group">
           <div class="form-label">Expert-comptable</div>
