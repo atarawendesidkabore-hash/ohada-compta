@@ -3,6 +3,7 @@
 
 let currentTab = "dashboard";
 let currentRef = "syscohada";
+let sycebnlType = "associations"; // 'associations' or 'projets'
 let journalEntries = [...SAMPLE_JOURNAL];
 let searchTerm = "";
 let filterClass = null;
@@ -18,6 +19,12 @@ document.getElementById("referentiel-select").addEventListener("change", (e) => 
   currentRef = e.target.value;
   render();
 });
+
+// SYCEBNL entity type switch (injected dynamically when SYCEBNL is active)
+function setSycebnlType(type) {
+  sycebnlType = type;
+  render();
+}
 
 // Mobile menu
 const mobileBtn = document.getElementById("mobile-menu-btn");
@@ -489,86 +496,123 @@ function renderResultat() {
   const bal = computeBalances();
 
   if (currentRef === "sycebnl") {
-    // SYCEBNL — format PAO (Produits) / CAO (Charges) + Classe 9
-    function sumSection(rows) {
+    // SYCEBNL — structure officielle AUDCIF
+    // Associations/ONG/Fondations: RA-RH (Revenus) / TA-TL (Charges) / XA/XB/XC/XD
+    // Projets de developpement: RA-RE (Revenus) / TA-TN (Charges)
+    const struct = sycebnlType === "projets" ? RESULTAT_SYCEBNL_PROJETS_STRUCTURE : RESULTAT_SYCEBNL_STRUCTURE;
+    const entityLabel = sycebnlType === "projets" ? "Projets de developpement" : "Associations / ONG / Fondations";
+
+    function sumRows(rows) {
       return rows.map(s => {
         let total = 0;
         Object.keys(bal).forEach(code => {
           if (s.comptes.some(p => code.startsWith(p))) {
             const mvtD = (bal[code].debit||0) - (bal[code].n1d||0);
             const mvtC = (bal[code].credit||0) - (bal[code].n1c||0);
-            if (s.sens === "credit") total += mvtC - mvtD;
-            else total += mvtD - mvtC;
+            total += s.sens === "credit" ? mvtC - mvtD : mvtD - mvtC;
           }
         });
         return { ...s, total };
       });
     }
-    const paoRows = sumSection(RESULTAT_SYCEBNL_STRUCTURE.pao);
-    const caoRows = sumSection(RESULTAT_SYCEBNL_STRUCTURE.cao);
-    const totalPAO = paoRows.reduce((s,r)=>s+r.total,0);
-    const totalCAO = caoRows.reduce((s,r)=>s+r.total,0);
-    const resultatNet = totalPAO - totalCAO;
-    let cv9Emplois=0, cv9Ressources=0;
+
+    const revRows = sumRows(struct.revenus);
+    const chgRows = sumRows(struct.charges);
+    const xA = revRows.reduce((s,r)=>s+r.total, 0);
+    const xB = chgRows.filter(r=>r.sens==="debit").reduce((s,r)=>s+r.total, 0);
+    const haoP = chgRows.filter(r=>r.sens==="credit").reduce((s,r)=>s+r.total, 0);
+    const haoC = (struct.hao||[]).reduce((acc,s)=>{
+      let t=0; Object.keys(bal).forEach(code=>{if(s.comptes.some(p=>code.startsWith(p))){const mvtD=(bal[code].debit||0)-(bal[code].n1d||0);const mvtC=(bal[code].credit||0)-(bal[code].n1c||0);t+=s.sens==="credit"?mvtC-mvtD:mvtD-mvtC;}});return{...s,total:t};
+    }, []);
+    const haoRows = struct.hao ? sumRows(struct.hao) : [];
+    const xC = xA - xB;
+    const xD = haoRows.filter(r=>r.sens==="credit").reduce((s,r)=>s+r.total,0) -
+               haoRows.filter(r=>r.sens==="debit").reduce((s,r)=>s+r.total,0);
+    const resultatNet = xC + xD;
+
+    // Classe 9 contributions volontaires
+    let cv9E=0, cv9R=0;
     Object.keys(bal).forEach(code => {
-      const mvtD=(bal[code].debit||0)-(bal[code].n1d||0);
-      const mvtC=(bal[code].credit||0)-(bal[code].n1c||0);
-      if (code.startsWith("91")) cv9Emplois += mvtD-mvtC;
-      if (code.startsWith("92")) cv9Ressources += mvtC-mvtD;
+      const d=(bal[code].debit||0)-(bal[code].n1d||0), c=(bal[code].credit||0)-(bal[code].n1c||0);
+      if (code.startsWith("91")) cv9E += d-c;
+      if (code.startsWith("92")) cv9R += c-d;
     });
+
     return `
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Compte de resultat — SYCEBNL</div>
-          <div class="card-subtitle">Associations, ONG, Fondations — Exercice 2026</div>
+          <div>
+            <div class="card-title">Compte de resultat — SYCEBNL</div>
+            <div class="card-subtitle">${entityLabel}</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn ${sycebnlType==="associations"?"btn-gold":"btn-outline"}" onclick="setSycebnlType('associations')">Associations</button>
+            <button class="btn ${sycebnlType==="projets"?"btn-gold":"btn-outline"}" onclick="setSycebnlType('projets')">Projets</button>
+          </div>
         </div>
-        <div class="section-title" style="color:var(--green);margin-top:12px;">PAO — Produits des Activites Ordinaires</div>
-        <table class="data-table" style="margin-bottom:16px;">
-          <thead><tr><th>Ref</th><th>Libelle</th><th style="text-align:right;">Montant (XOF)</th></tr></thead>
+
+        <div class="section-title" style="color:var(--green);margin-top:8px;">Revenus des Activites Ordinaires</div>
+        <table class="data-table" style="margin-bottom:8px;">
+          <thead><tr><th style="width:50px;">REF</th><th>LIBELLES</th><th style="text-align:right;">N (XOF)</th></tr></thead>
           <tbody>
-            ${paoRows.map(r=>`<tr>
-              <td class="code" style="color:var(--cyan);">${r.ref}</td>
+            ${revRows.map(r=>`<tr>
+              <td class="code" style="color:var(--cyan);font-weight:700;">${r.ref}</td>
               <td>${r.label}</td>
               <td style="text-align:right;" class="credit">${r.total>0?fmt(r.total):'-'}</td>
             </tr>`).join("")}
-            <tr style="font-weight:700;border-top:2px solid var(--green);">
-              <td colspan="2" style="color:var(--green);">TOTAL PAO</td>
-              <td style="text-align:right;" class="credit">${fmt(totalPAO)}</td>
+            <tr style="font-weight:700;border-top:2px solid var(--green);background:rgba(0,230,118,0.06);">
+              <td style="color:var(--green);">XA</td>
+              <td style="color:var(--green);">REVENUS DES ACTIVITES ORDINAIRES</td>
+              <td style="text-align:right;" class="credit">${fmt(xA)}</td>
             </tr>
           </tbody>
         </table>
-        <div class="section-title" style="color:var(--red);">CAO — Charges des Activites Ordinaires</div>
-        <table class="data-table" style="margin-bottom:16px;">
-          <thead><tr><th>Ref</th><th>Libelle</th><th style="text-align:right;">Montant (XOF)</th></tr></thead>
+
+        <div class="section-title" style="color:var(--red);">Charges des Activites Ordinaires</div>
+        <table class="data-table" style="margin-bottom:8px;">
+          <thead><tr><th style="width:50px;">REF</th><th>LIBELLES</th><th style="text-align:right;">N (XOF)</th></tr></thead>
           <tbody>
-            ${caoRows.map(r=>`<tr>
-              <td class="code" style="color:var(--orange);">${r.ref}</td>
+            ${chgRows.filter(r=>r.sens==="debit").map(r=>`<tr>
+              <td class="code" style="color:var(--orange);font-weight:700;">${r.ref}</td>
               <td>${r.label}</td>
               <td style="text-align:right;" class="debit">${r.total>0?fmt(r.total):'-'}</td>
             </tr>`).join("")}
-            <tr style="font-weight:700;border-top:2px solid var(--red);">
-              <td colspan="2" style="color:var(--red);">TOTAL CAO</td>
-              <td style="text-align:right;" class="debit">${fmt(totalCAO)}</td>
+            <tr style="font-weight:700;border-top:2px solid var(--red);background:rgba(255,82,82,0.06);">
+              <td style="color:var(--red);">XB</td>
+              <td style="color:var(--red);">CHARGES DES ACTIVITES ORDINAIRES</td>
+              <td style="text-align:right;" class="debit">${fmt(xB)}</td>
             </tr>
           </tbody>
         </table>
-        <table class="data-table" style="margin-bottom:16px;">
+
+        <table class="data-table" style="margin-bottom:8px;">
           <tbody>
-            <tr style="font-weight:700;font-size:1.1rem;border-top:2px solid var(--gold);">
-              <td style="color:var(--gold);">RESULTAT NET — ${resultatNet>=0?'EXCEDENT':'DEFICIT'}</td>
-              <td style="text-align:right;font-family:var(--mono);color:${resultatNet>=0?'var(--green)':'var(--red)'};">${
-fmt(Math.abs(resultatNet))} XOF</td>
+            <tr style="font-weight:700;border-top:2px solid var(--gold);font-size:1rem;">
+              <td style="width:50px;color:var(--gold);">XC</td>
+              <td style="color:var(--gold);">RESULTAT DES ACTIVITES ORDINAIRES (XA - XB)</td>
+              <td style="text-align:right;color:${xC>=0?'var(--green)':'var(--red)'};font-family:var(--mono);font-weight:700;">${fmt(xC)}</td>
+            </tr>
+            ${haoRows.length>0?haoRows.map(r=>`<tr>
+              <td class="code" style="color:var(--muted);">${r.ref}</td><td>${r.label}</td>
+              <td style="text-align:right;" class="${r.sens==="credit"?"credit":"debit"}">${r.total>0?fmt(r.total):'-'}</td>
+            </tr>`).join(""):""}
+            ${haoRows.length>0?`<tr style="font-weight:700;"><td style="color:var(--muted);">XD</td><td style="color:var(--muted);">RESULTAT HAO (TM - TN)</td><td style="text-align:right;">${fmt(xD)}</td></tr>`:""}
+            <tr style="font-weight:700;border-top:3px solid var(--gold);font-size:1.05rem;background:rgba(200,146,42,0.08);">
+              <td style="color:var(--gold);">XC</td>
+              <td style="color:var(--gold);">SOLDE DES OPERATIONS — ${resultatNet>=0?'EXCEDENT':'DEFICIT'}</td>
+              <td style="text-align:right;font-family:var(--mono);color:${resultatNet>=0?'var(--green)':'var(--red)'};">${fmt(Math.abs(resultatNet))} XOF</td>
             </tr>
           </tbody>
         </table>
-        ${cv9Emplois>0||cv9Ressources>0?`
+
+        ${cv9E>0||cv9R>0?`
         <div class="section-title" style="color:var(--cyan);">Classe 9 — Contributions volontaires en nature</div>
         <table class="data-table">
           <tbody>
-            <tr><td>Emplois valorises (91x)</td><td style="text-align:right;" class="debit">${fmt(cv9Emplois)}</td></tr>
-            <tr><td>Ressources valorisees (92x)</td><td style="text-align:right;" class="credit">${fmt(cv9Ressources)}</td></tr>
+            <tr><td class="code" style="color:var(--cyan);">91x</td><td>Emplois valorises</td><td style="text-align:right;" class="debit">${fmt(cv9E)}</td></tr>
+            <tr><td class="code" style="color:var(--cyan);">92x</td><td>Ressources valorisees</td><td style="text-align:right;" class="credit">${fmt(cv9R)}</td></tr>
           </tbody>
-        </table>`:''}
+        </table>`:""}
       </div>
     `;
   }

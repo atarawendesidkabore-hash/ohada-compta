@@ -376,28 +376,60 @@ const RESULTAT_STRUCTURE = [
   { section: "IMPOT SUR LE RESULTAT", comptes: ["89"], sens: "debit" },
 ];
 
-// SYCEBNL Compte de Resultat — structure officielle PAO / CAO
+// SYCEBNL Compte de Resultat — structure officielle SYCEBNL
+// Source: Etats financiers Associations/ONG/Fondations (AUDCIF SYCEBNL)
+// Refs officiels: RA-RH (Revenus) / TA-TL (Charges) / XA/XB/XC/XD subtotaux
 const RESULTAT_SYCEBNL_STRUCTURE = {
-  pao: [
-    {ref:"RA",label:"Cotisations et contributions des membres",comptes:["744"],sens:"credit"},
-    {ref:"RB",label:"Dons en especes et legs",comptes:["742"],sens:"credit"},
-    {ref:"RC",label:"Dons en nature valorises",comptes:["741"],sens:"credit"},
-    {ref:"RD",label:"Subventions de fonctionnement recues",comptes:["711"],sens:"credit"},
-    {ref:"RE",label:"Subventions de projets recues",comptes:["743"],sens:"credit"},
-    {ref:"RF",label:"Produits de la vente de biens et services",comptes:["701","706"],sens:"credit"},
-    {ref:"RG",label:"Revenus financiers",comptes:["77"],sens:"credit"},
-    {ref:"RH",label:"Produits HAO",comptes:["82","84"],sens:"credit"},
-    {ref:"RI",label:"Autres produits",comptes:["75","72"],sens:"credit"},
+  revenus: [
+    {ref:"RA",label:"Cotisations",comptes:["744"],sens:"credit"},
+    {ref:"RB",label:"Dotations consomptibles transferees au compte de resultat",comptes:["1049"],sens:"credit"},
+    {ref:"RC",label:"Revenus lies a la generosite (dons, legs, mécénat)",comptes:["741","742","745"],sens:"credit"},
+    {ref:"RD",label:"Vente de marchandises",comptes:["701"],sens:"credit"},
+    {ref:"RE",label:"Vente de services et produits finis",comptes:["706","702","703"],sens:"credit"},
+    {ref:"RF",label:"Subventions d'exploitation",comptes:["711","743"],sens:"credit"},
+    {ref:"RG",label:"Autres produits et transferts de charges",comptes:["75","72","77"],sens:"credit"},
+    {ref:"RH",label:"Reprises de provisions, depreciations et autres reprises",comptes:["79"],sens:"credit"},
   ],
-  cao: [
-    {ref:"EA",label:"Achats de biens et fournitures",comptes:["601","604","605"],sens:"debit"},
-    {ref:"EB",label:"Transports et deplacements",comptes:["61","653"],sens:"debit"},
-    {ref:"EC",label:"Services exterieurs",comptes:["62","63"],sens:"debit"},
-    {ref:"ED",label:"Charges liees aux projets",comptes:["651","652"],sens:"debit"},
-    {ref:"EE",label:"Impots et taxes",comptes:["64"],sens:"debit"},
-    {ref:"EF",label:"Charges de personnel",comptes:["66"],sens:"debit"},
-    {ref:"EG",label:"Dotations aux amortissements",comptes:["68"],sens:"debit"},
-    {ref:"EH",label:"Charges financieres et HAO",comptes:["67","81","83","85","87","89"],sens:"debit"},
+  charges: [
+    {ref:"TA",label:"Achats de biens et services lies a l'activite",comptes:["601","604","651","652"],sens:"debit"},
+    {ref:"TB",label:"Variation de stocks des achats",comptes:["603"],sens:"debit"},
+    {ref:"TC",label:"Achats de marchandises et matieres premieres",comptes:["602","605"],sens:"debit"},
+    {ref:"TF",label:"Transports",comptes:["61","653"],sens:"debit"},
+    {ref:"TG",label:"Services exterieurs",comptes:["62","63"],sens:"debit"},
+    {ref:"TH",label:"Impots et taxes",comptes:["64"],sens:"debit"},
+    {ref:"TI",label:"Autres charges",comptes:["65"],sens:"debit"},
+    {ref:"TJ",label:"Charges de personnel",comptes:["66"],sens:"debit"},
+    {ref:"TK",label:"Frais financiers et charges assimilees",comptes:["67"],sens:"debit"},
+    {ref:"TL",label:"Dotations aux amortissements, provisions et depreciations",comptes:["68","69"],sens:"debit"},
+  ],
+  hao: [
+    {ref:"TM",label:"Produits H.A.O.",comptes:["82","84"],sens:"credit"},
+    {ref:"TN",label:"Charges H.A.O.",comptes:["81","83","85","87","89"],sens:"debit"},
+  ]
+};
+
+// SYCEBNL Projets de developpement — structure officielle
+// Source: Etats financiers Projets de developpement (AUDCIF SYCEBNL)
+const RESULTAT_SYCEBNL_PROJETS_STRUCTURE = {
+  revenus: [
+    {ref:"RA",label:"Fonds d'administration recus",comptes:["161","162","163","164"],sens:"credit"},
+    {ref:"RB",label:"Ventes de marchandises, produits finis et prestations",comptes:["701","706","702"],sens:"credit"},
+    {ref:"RC",label:"Subventions d'exploitation",comptes:["711","743"],sens:"credit"},
+    {ref:"RD",label:"Autres produits et transferts de charges",comptes:["75","72","77"],sens:"credit"},
+    {ref:"RE",label:"Reprises de provisions",comptes:["79"],sens:"credit"},
+  ],
+  charges: [
+    {ref:"TA",label:"Achats de biens, matieres et fournitures",comptes:["601","602","604","605"],sens:"debit"},
+    {ref:"TB",label:"Autres achats",comptes:["608"],sens:"debit"},
+    {ref:"TD",label:"Transports",comptes:["61","653"],sens:"debit"},
+    {ref:"TG",label:"Services exterieurs",comptes:["62","63"],sens:"debit"},
+    {ref:"TH",label:"Impots et taxes",comptes:["64"],sens:"debit"},
+    {ref:"TI",label:"Autres charges",comptes:["651","652"],sens:"debit"},
+    {ref:"TJ",label:"Charges de personnel",comptes:["66"],sens:"debit"},
+    {ref:"TK",label:"Frais financiers et charges assimilees",comptes:["67"],sens:"debit"},
+    {ref:"TL",label:"Dotations aux amortissements et provisions",comptes:["68","69"],sens:"debit"},
+    {ref:"TM",label:"Produits H.A.O.",comptes:["82","84"],sens:"credit"},
+    {ref:"TN",label:"Charges H.A.O.",comptes:["81","83","85","87","89"],sens:"debit"},
   ]
 };
 
