@@ -327,10 +327,10 @@ function renderDashboard() {
 
     ${(margePct !== null || liquidite !== null || endettement !== null) ? `
     <div class="kpi-grid" style="margin-top:0;">
-      ${margePct !== null ? `<div class="kpi"><div class="kpi-label">Marge nette</div><div class="kpi-value" style="color:${parseFloat(margePct)>=0?'var(--green)":'var(--red)'}">${margePct}%</div><div class="kpi-note">${resultat>=0?'Benefice':'Perte'} ${fmt(Math.abs(resultat))} XOF</div></div>` : ''}
-      ${liquidite !== null ? `<div class="kpi"><div class="kpi-label">Liquidite generale</div><div class="kpi-value" style="color:${parseFloat(liquidite)>=1?'var(--green)":'var(--red)'}">${liquidite}</div><div class="kpi-note">${parseFloat(liquidite)>=1?'Solvable':'Risque liquidite'}</div></div>` : ''}
-      ${endettement !== null ? `<div class="kpi"><div class="kpi-label">Taux endettement</div><div class="kpi-value" style="color:${parseFloat(endettement)<=100?'var(--green)":'var(--red)'}">${endettement}%</div><div class="kpi-note">Capital social: ${fmt(capital)} XOF</div></div>` : ''}
-      ${capital > 0 ? `<div class="kpi"><div class="kpi-label">Rentabilite CP</div><div class="kpi-value" style="color:${resultat>=0?'var(--green)":'var(--red)'}">${capital > 0 ? (resultat/capital*100).toFixed(1)+'%' : '—'}</div><div class="kpi-note">Resultat / Capital</div></div>` : ''}
+      ${margePct !== null ? `<div class="kpi"><div class="kpi-label">Marge nette</div><div class="kpi-value" style="color:${parseFloat(margePct) >= 0 ? 'var(--green)' : 'var(--red)'}">${margePct}%</div><div class="kpi-note">${resultat >= 0 ? 'Benefice' : 'Perte'} ${fmt(Math.abs(resultat))} XOF</div></div>` : ''}
+      ${liquidite !== null ? `<div class="kpi"><div class="kpi-label">Liquidite generale</div><div class="kpi-value" style="color:${parseFloat(liquidite) >= 1 ? 'var(--green)' : 'var(--red)'}">${liquidite}</div><div class="kpi-note">${parseFloat(liquidite) >= 1 ? 'Solvable' : 'Risque liquidite'}</div></div>` : ''}
+      ${endettement !== null ? `<div class="kpi"><div class="kpi-label">Taux endettement</div><div class="kpi-value" style="color:${parseFloat(endettement) <= 100 ? 'var(--green)' : 'var(--red)'}">${endettement}%</div><div class="kpi-note">Capital social: ${fmt(capital)} XOF</div></div>` : ''}
+      ${capital > 0 ? `<div class="kpi"><div class="kpi-label">Rentabilite CP</div><div class="kpi-value" style="color:${resultat >= 0 ? 'var(--green)' : 'var(--red)'}">${capital > 0 ? (resultat / capital * 100).toFixed(1) + '%' : '—'}</div><div class="kpi-note">Resultat / Capital</div></div>` : ''}
     </div>` : ''}
 
     <div class="grid-2">
@@ -1437,8 +1437,8 @@ function renderParametres() {
   const accounts = getAccounts();
   const acct = currentCompanyId ? accounts.find(a => a.id === currentCompanyId) : null;
 
-  const formesJuridiques = ['SA','SARL','SAS','SASU','EURL','SNC','SCS','GIE','Cooperative','Association','ONG','Fondation','Projet de developpement','Etablissement public','Autre'];
-  const regimesFiscaux = ['Reel Normal d'Imposition (RNI)','Reel Simplifie d'Imposition (RSI)','Contribution des Micro-Entreprises (CME)','Forfait d'Imposition','Exonere'];
+  const formesJuridiques = ["SA","SARL","SAS","SASU","EURL","SNC","SCS","GIE","Cooperative","Association","ONG","Fondation","Projet de developpement","Etablissement public","Autre"];
+  const regimesFiscaux = ["Reel Normal d'Imposition (RNI)","Reel Simplifie d'Imposition (RSI)","Contribution des Micro-Entreprises (CME)","Forfait d'Imposition","Exonere"];
 
   return `
     <div class="card">
