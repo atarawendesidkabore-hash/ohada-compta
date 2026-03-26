@@ -26,6 +26,8 @@ const SESSION_KEY  = 'ohada_session';
 const DATA_PREFIX  = 'ohada_data_';
 const BF_LIASSE_PACKET_NAME = "BFA Liasse Fiscale Sys Normal SYSCOHADA Révisé DGI-BF[254]";
 const BF_LIASSE_DOWNLOAD_NAME = `${BF_LIASSE_PACKET_NAME}.xlsx`;
+const EXACT_LIASSE_TEMPLATE_PATH = "LIASSE.xlsx";
+const EXACT_LIASSE_DOWNLOAD_NAME = "LIASSE.xlsx";
 let currentCompanyId = null;
 
 function simpleHash(str) {
@@ -491,7 +493,215 @@ function appendWorkbookSheet(workbook, name, rows, widths, mergeAcross) {
   XLSX.utils.book_append_sheet(workbook, ws, name);
 }
 
-function downloadBfaLiasseFiscale() {
+function normalizeTemplateKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function getCountryCodeForLiasse(country) {
+  const key = normalizeTemplateKey(country);
+  const map = {
+    "benin": "01",
+    "burkina": "02",
+    "burkina faso": "02",
+    "cote d ivoire": "03",
+    "cote divoire": "03",
+    "guinee bissau": "04",
+    "mali": "05",
+    "niger": "06",
+    "senegal": "07",
+    "togo": "08",
+    "cameroun": "09",
+    "centrafrique": "10",
+    "congo": "11",
+    "gabon": "12",
+    "guinee equatoriale": "13",
+    "tchad": "14",
+    "comores": "15",
+    "guinee": "16",
+    "guinee conakry": "16",
+  };
+  return map[key] || "99";
+}
+
+function getLegalFormCodeForLiasse(formeJuridique) {
+  const key = normalizeTemplateKey(formeJuridique);
+  if (!key) return "09";
+  if (key.includes("participation publique") && key.includes("sa")) return "00";
+  if (key === "sa" || key.includes("societe anonyme")) return "01";
+  if (key.includes("sas")) return "02";
+  if (key.includes("sarl") || key.includes("eurl")) return "03";
+  if (key.includes("scs")) return "04";
+  if (key.includes("snc")) return "05";
+  if (key.includes("participation")) return "06";
+  if (key.includes("gie")) return "07";
+  if (key.includes("association") || key.includes("ong") || key.includes("fondation")) return "08";
+  return "09";
+}
+
+function getFiscalRegimeCodeForLiasse(regimeFiscal) {
+  const key = normalizeTemplateKey(regimeFiscal);
+  if (key.includes("normal")) return "1";
+  if (key.includes("simplifie")) return "2";
+  if (key.includes("micro") || key.includes("cme")) return "3";
+  return "4";
+}
+
+function toExcelSerial(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000) + 25569);
+}
+
+function getWritableCell(existing) {
+  const cell = Object.assign({}, existing || {});
+  delete cell.f;
+  delete cell.F;
+  delete cell.w;
+  delete cell.r;
+  delete cell.h;
+  return cell;
+}
+
+function setWorksheetText(sheet, ref, value) {
+  if (!sheet || value === undefined || value === null) return;
+  const cell = getWritableCell(sheet[ref]);
+  sheet[ref] = Object.assign(cell, { t: "s", v: String(value) });
+}
+
+function setWorksheetNumber(sheet, ref, value) {
+  if (!sheet || value === undefined || value === null || value === "") return;
+  const num = Number(value);
+  if (Number.isNaN(num)) return;
+  const cell = getWritableCell(sheet[ref]);
+  sheet[ref] = Object.assign(cell, { t: "n", v: num });
+}
+
+function setWorksheetDate(sheet, ref, value) {
+  const serial = toExcelSerial(value);
+  if (!sheet || serial === null) return;
+  const cell = getWritableCell(sheet[ref]);
+  sheet[ref] = Object.assign(cell, { t: "n", v: serial, z: cell.z || "dd/mm/yyyy" });
+}
+
+function setDigitSequence(sheet, startRef, rawValue, length) {
+  if (!sheet) return;
+  const match = /^([A-Z]+)(\d+)$/.exec(startRef);
+  if (!match) return;
+  const start = XLSX.utils.decode_cell(startRef);
+  const digits = String(rawValue || "").replace(/\D/g, "").padStart(length, "0").slice(-length);
+  for (let i = 0; i < length; i++) {
+    const ref = XLSX.utils.encode_cell({ c: start.c + i, r: start.r });
+    setWorksheetNumber(sheet, ref, Number(digits[i]));
+  }
+}
+
+function guessCityFromAddress(address, country) {
+  const parts = String(address || "").split(",").map(part => part.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  const normalizedCountry = normalizeTemplateKey(country);
+  const filtered = parts.filter(part => normalizeTemplateKey(part) !== normalizedCountry);
+  return filtered.length > 1 ? filtered[filtered.length - 1] : (filtered[0] || "");
+}
+
+function getPhoneCountryCode(phone) {
+  const match = String(phone || "").match(/\+?(\d{1,3})/);
+  return match ? match[1] : "";
+}
+
+function getExerciseDurationMonths(start, end) {
+  if (!start || !end) return 12;
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return 12;
+  return Math.max(1, ((endDate.getFullYear() - startDate.getFullYear()) * 12) + (endDate.getMonth() - startDate.getMonth()) + 1);
+}
+
+function getPreviousExerciseEnd(endDate) {
+  if (!endDate) return "";
+  const date = new Date(endDate);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getFullYear() - 1, date.getMonth(), date.getDate()).toISOString().slice(0, 10);
+}
+
+function populateExactLiasseTemplate(workbook) {
+  const acct = getCurrentAccountMeta();
+  const companyName = getCompanyDisplayName();
+  const countryLabel = (currentCompanyDetails.pays || "Burkina Faso").trim();
+  const countryCode = getCountryCodeForLiasse(countryLabel);
+  const legalFormCode = getLegalFormCodeForLiasse(currentCompanyDetails.formeJuridique || "");
+  const regimeCode = getFiscalRegimeCodeForLiasse(currentCompanyDetails.regimeFiscal || "");
+  const exerciseStart = currentCompanyDetails.exerciceDu || "";
+  const exerciseEnd = currentCompanyDetails.exerciceAu || "";
+  const previousExerciseEnd = getPreviousExerciseEnd(exerciseEnd);
+  const durationMonths = getExerciseDurationMonths(exerciseStart, exerciseEnd);
+  const city = guessCityFromAddress(currentCompanyDetails.siegeSocial || "", countryLabel);
+  const phoneCode = getPhoneCountryCode(currentCompanyDetails.tel || "");
+  const companyCountryUpper = countryLabel.toUpperCase();
+  const contactLine = [
+    currentCompanyDetails.expertComptable || companyName,
+    currentCompanyDetails.tel || "",
+    currentCompanyDetails.emailCompta || (acct ? acct.email : "")
+  ].filter(Boolean).join(" | ");
+  const isPublicEntity = normalizeTemplateKey(currentCompanyDetails.formeJuridique || "").includes("public");
+  const isForeignControlled = countryCode !== "02";
+
+  const couverture = workbook.Sheets["COUVERTURE"];
+  const garde = workbook.Sheets["GARDE"];
+  const r1 = workbook.Sheets["FICHE R1"];
+  const r2 = workbook.Sheets["FICHE R2"];
+
+  setWorksheetText(couverture, "F4", companyCountryUpper);
+  setWorksheetText(garde, "B2", companyCountryUpper);
+  setWorksheetText(garde, "D22", companyName);
+  setWorksheetText(garde, "C26", currentCompanyDetails.sigleUsuel || "");
+  setWorksheetText(garde, "C28", currentCompanyDetails.siegeSocial || "");
+  setWorksheetText(garde, "D30", currentCompanyDetails.nif || "");
+  setWorksheetText(garde, "D31", currentCompanyDetails.nes || "");
+  setWorksheetDate(garde, "E17", exerciseEnd);
+
+  setWorksheetDate(r1, "N8", exerciseStart);
+  setWorksheetDate(r1, "S8", exerciseEnd);
+  setWorksheetDate(r1, "H10", exerciseEnd);
+  setWorksheetDate(r1, "H12", previousExerciseEnd);
+  setWorksheetNumber(r1, "U12", durationMonths);
+  setWorksheetText(r1, "D14", city);
+  setWorksheetText(r1, "K14", currentCompanyDetails.rccm || "");
+  setWorksheetText(r1, "C20", currentCompanyDetails.formeJuridique || "Entreprise");
+  setWorksheetText(r1, "Q20", currentCompanyDetails.sigleUsuel || "");
+  setWorksheetText(r1, "C23", currentCompanyDetails.tel || "");
+  setWorksheetText(r1, "E23", currentCompanyDetails.emailCompta || (acct ? acct.email : ""));
+  setWorksheetNumber(r1, "K23", phoneCode);
+  setWorksheetText(r1, "Q23", city);
+  setWorksheetText(r1, "C29", currentCompanyDetails.activitePrincipale || "");
+  setWorksheetText(r1, "C32", contactLine);
+  setWorksheetText(r1, "C35", contactLine);
+  setWorksheetText(r1, "C43", currentCompanyDetails.expertComptable || "");
+
+  setDigitSequence(r2, "Q9", legalFormCode, 2);
+  setDigitSequence(r2, "Q11", regimeCode, 1);
+  setDigitSequence(r2, "Q13", countryCode, 2);
+  setDigitSequence(r2, "Q15", 1, 2);
+  setDigitSequence(r2, "Q17", 0, 2);
+  setDigitSequence(r2, "Q20", new Date(exerciseStart || exerciseEnd || Date.now()).getFullYear(), 4);
+  setWorksheetNumber(r2, "AK9", isPublicEntity ? 1 : 0);
+  setWorksheetNumber(r2, "AK11", !isPublicEntity && !isForeignControlled ? 1 : 0);
+  setWorksheetNumber(r2, "AK13", isForeignControlled ? 1 : 0);
+}
+
+async function loadExactLiasseTemplateWorkbook() {
+  const response = await fetch(`${EXACT_LIASSE_TEMPLATE_PATH}?v=20260326`);
+  if (!response.ok) throw new Error(`Template ${EXACT_LIASSE_TEMPLATE_PATH} introuvable (${response.status})`);
+  const buffer = await response.arrayBuffer();
+  return XLSX.read(buffer, { type: "array", cellStyles: true, cellFormula: true });
+}
+
+function downloadGeneratedBfaLiasseFiscale() {
   if (currentRef !== "syscohada") {
     showToast("Le fichier BF[254] est reserve au referentiel SYSCOHADA. Basculez sur SYSCOHADA avant le telechargement.", "error");
     return;
@@ -580,6 +790,29 @@ function downloadBfaLiasseFiscale() {
 
   XLSX.writeFile(workbook, BF_LIASSE_DOWNLOAD_NAME, { compression: true });
   showToast(`Classeur ${BF_LIASSE_DOWNLOAD_NAME} genere avec succes.`, "success");
+}
+
+async function downloadBfaLiasseFiscale() {
+  if (currentRef !== "syscohada") {
+    showToast("Le fichier LIASSE.xlsx est reserve au referentiel SYSCOHADA. Basculez sur SYSCOHADA avant le telechargement.", "error");
+    return;
+  }
+
+  if (typeof XLSX === "undefined") {
+    showToast("Librairie Excel non chargee. Verifiez votre connexion.", "error");
+    return;
+  }
+
+  try {
+    const workbook = await loadExactLiasseTemplateWorkbook();
+    populateExactLiasseTemplate(workbook);
+    XLSX.writeFile(workbook, EXACT_LIASSE_DOWNLOAD_NAME, { bookType: "xlsx", compression: true });
+    showToast(`Le modele exact ${EXACT_LIASSE_DOWNLOAD_NAME} a ete rempli avec succes.`, "success");
+  } catch (error) {
+    console.warn("Exact template export failed", error);
+    showToast("Modele LIASSE.xlsx indisponible. Generation du classeur interne en secours.", "info");
+    downloadGeneratedBfaLiasseFiscale();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1522,13 +1755,13 @@ function renderDSF() {
       <div class="card-header">
         <div>
           <div class="card-title">Declaration Statistique et Fiscale (DSF)</div>
-          <div class="card-subtitle">Export du classeur fiscal Burkina Faso depuis les donnees de l'application.</div>
+          <div class="card-subtitle">Remplissage du modele exact LIASSE.xlsx a partir des donnees de l'application.</div>
         </div>
-        <button class="btn btn-gold" onclick="downloadBfaLiasseFiscale()">Telecharger BF[254] (.xlsx)</button>
+        <button class="btn btn-gold" onclick="downloadBfaLiasseFiscale()">Telecharger LIASSE.xlsx rempli</button>
       </div>
       <div class="info-box" style="margin-bottom:16px;">
         <strong>Packet cible:</strong> ${packetName}<br><br>
-        La DSF est la declaration fiscale annuelle obligatoire dans les pays OHADA. Elle comprend la liasse comptable normalisee conforme au SYSCOHADA, transmise a la Direction Generale des Impots (DGI). Etat d'avancement actuel: <strong>${readyCount}/${statuses.length}</strong> rubriques pretes.
+        Le telechargement repose desormais sur le modele exact <strong>LIASSE.xlsx</strong> integre au projet. Les champs d'identification et de codification pays/forme/regime sont pre-remplis a partir de vos donnees. Etat d'avancement actuel: <strong>${readyCount}/${statuses.length}</strong> rubriques pretes.
       </div>
       <div class="stack">
         ${statuses.map(d => `
