@@ -358,3 +358,25 @@ a { color: var(--gold); text-decoration: none; }
 }
 .btn-logout:hover { color: var(--red); border-color: var(--red); }
 
+
+/* ========== COMPANY HEADER (dashboard) ========== */
+.company-header {
+  background: linear-gradient(135deg, rgba(200,146,42,0.08) 0%, rgba(200,146,42,0.04) 100%);
+  border: 1px solid rgba(200,146,42,0.25);
+  border-radius: var(--radius);
+  padding: 16px 24px;
+  margin-bottom: 20px;
+}
+.company-header-name {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--gold);
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+}
+.company-header-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 4px;
+  letter-spacing: 0.03em;
+}
