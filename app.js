@@ -445,6 +445,8 @@ function downloadBalanceTemplate() {
 // ═══════════════════════════════════════════════════════════
 function renderBilan() {
   const bal = computeBalances();
+
+  // sum debit-credit for a list of account prefixes (net value)
   function sumByPrefix(prefixes) {
     let total = 0;
     Object.keys(bal).forEach(code => {
@@ -455,22 +457,51 @@ function renderBilan() {
     return total;
   }
 
-  const actifRows = BILAN_STRUCTURE.actif.map(s => ({ section: s.section, total: sumByPrefix(s.accounts) }));
-  const passifRows = BILAN_STRUCTURE.passif.map(s => ({ section: s.section, total: -sumByPrefix(s.accounts) }));
+  // Actif: net value = accounts + amortissements/depreciations (debit-credit auto-nets)
+  const actifRows = BILAN_STRUCTURE.actif.map(s => ({
+    section: s.section,
+    total: sumByPrefix([...s.accounts, ...(s.amort||[])])
+  }));
+
+  // Passif: negate (credit-normal accounts)
+  const passifRows = BILAN_STRUCTURE.passif.map(s => ({
+    section: s.section,
+    total: -sumByPrefix(s.accounts)
+  }));
+
+  // Compute exercise result from gestion account MOVEMENTS (not opening balances)
+  let produits = 0, charges = 0;
+  Object.keys(bal).forEach(code => {
+    const mvtD = (bal[code].debit||0) - (bal[code].n1d||0);
+    const mvtC = (bal[code].credit||0) - (bal[code].n1c||0);
+    const c = parseInt(code[0]);
+    if (c === 7 || code.startsWith('82') || code.startsWith('84')) produits += mvtC - mvtD;
+    if (c === 6 || code.startsWith('81') || code.startsWith('83') ||
+        code.startsWith('85') || code.startsWith('87') || code.startsWith('89')) charges += mvtD - mvtC;
+  });
+  const resultatExercice = produits - charges;
+
+  // Add result to CAPITAUX PROPRES (first passif row)
+  if (passifRows.length > 0) passifRows[0].total += resultatExercice;
+
   const totalActif = actifRows.reduce((s, r) => s + r.total, 0);
   const totalPassif = passifRows.reduce((s, r) => s + r.total, 0);
+  const isBalanced = Math.abs(totalActif - totalPassif) < 1;
 
   return `
     <div class="card">
-      <div class="card-header"><div class="card-title">Bilan — ${currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise"}</div></div>
+      <div class="card-header">
+        <div class="card-title">Bilan — ${currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise"}</div>
+        <div class="card-subtitle" style="color:${isBalanced?'var(--green)':'var(--red)'};">Equilibre: ${isBalanced?'OK ✓':'ERREUR — ecart '+fmt(Math.abs(totalActif-totalPassif))}</div>
+      </div>
       <div class="grid-2">
         <div>
-          <div class="section-title">ACTIF</div>
+          <div class="section-title">ACTIF (valeurs nettes)</div>
           <table class="data-table">
-            <thead><tr><th>Section</th><th style="text-align:right;">Montant (XOF)</th></tr></thead>
+            <thead><tr><th>Section</th><th style="text-align:right;">Net (XOF)</th></tr></thead>
             <tbody>
               ${actifRows.map(r => `<tr><td>${r.section}</td><td style="text-align:right;font-family:var(--mono);" class="debit">${fmt(Math.abs(r.total))}</td></tr>`).join("")}
-              <tr style="font-weight:700;border-top:2px solid var(--gold);"><td style="color:var(--gold);">TOTAL ACTIF</td><td style="text-align:right;font-family:var(--mono);" class="debit">${fmt(Math.abs(totalActif))}</td></tr>
+              <tr style="font-weight:700;border-top:2px solid var(--gold);"><td style="color:var(--gold);">TOTAL ACTIF</td><td style="text-align:right;font-family:var(--mono);color:var(--gold);">${fmt(Math.abs(totalActif))}</td></tr>
             </tbody>
           </table>
         </div>
@@ -479,8 +510,8 @@ function renderBilan() {
           <table class="data-table">
             <thead><tr><th>Section</th><th style="text-align:right;">Montant (XOF)</th></tr></thead>
             <tbody>
-              ${passifRows.map(r => `<tr><td>${r.section}</td><td style="text-align:right;font-family:var(--mono);" class="credit">${fmt(Math.abs(r.total))}</td></tr>`).join("")}
-              <tr style="font-weight:700;border-top:2px solid var(--gold);"><td style="color:var(--gold);">TOTAL PASSIF</td><td style="text-align:right;font-family:var(--mono);" class="credit">${fmt(Math.abs(totalPassif))}</td></tr>
+              ${passifRows.map((r,i) => `<tr><td>${r.section}${i===0?' <span style="font-size:0.72rem;color:var(--muted);">(dont Resultat: '+fmt(Math.abs(resultatExercice))+' '+(resultatExercice>=0?'Excedent':'Deficit')+')</span>':''}</td><td style="text-align:right;font-family:var(--mono);" class="credit">${fmt(Math.abs(r.total))}</td></tr>`).join("")}
+              <tr style="font-weight:700;border-top:2px solid var(--gold);"><td style="color:var(--gold);">TOTAL PASSIF</td><td style="text-align:right;font-family:var(--mono);color:var(--gold);">${fmt(Math.abs(totalPassif))}</td></tr>
             </tbody>
           </table>
         </div>
