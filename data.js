@@ -315,6 +315,8 @@ const OPENING_BALANCES = {
   "920":  {n1d:0,       n1c:1200000},
   "910":  {n1d:1200000, n1c:0},
 };
+// Snapshot for logout reset (do not modify)
+const DEFAULT_OPENING_BALANCES = Object.assign({}, OPENING_BALANCES);
 // Journal codes
 const JOURNAL_CODES = [
   { code: "AC", label: "Journal des achats" },

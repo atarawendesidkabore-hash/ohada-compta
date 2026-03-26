@@ -14,11 +14,13 @@
       <span class="topbar-label">Comptabilite SYSCOHADA & SYCEBNL</span>
     </div>
     <div class="topbar-right">
+      <span id="company-name-display" class="company-badge" style="display:none;"></span>
       <select id="referentiel-select" class="ref-select">
         <option value="syscohada">SYSCOHADA Revise</option>
         <option value="sycebnl">SYCEBNL</option>
       </select>
       <span class="topbar-meta" id="clock"></span>
+      <button id="btn-logout" class="btn-logout" style="display:none;" onclick="logoutCompany()">Deconnexion</button>
     </div>
   </nav>
 
@@ -68,5 +70,33 @@
   </div>
   <!-- Toast notifications -->
   <div id="toast-container"></div>
+  <!-- Auth overlay -->
+  <div id="auth-overlay" class="auth-overlay">
+    <div class="auth-card">
+      <div class="auth-logo">OHADA<span class="accent">COMPTA</span></div>
+      <div class="auth-subtitle">Comptabilite SYSCOHADA &amp; SYCEBNL</div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tab-login" onclick="showAuthTab('login')">Se connecter</button>
+        <button class="auth-tab" id="tab-register" onclick="showAuthTab('register')">Creer un compte</button>
+      </div>
+      <!-- Login form -->
+      <div id="form-login">
+        <div class="form-group"><div class="form-label">Email</div><input class="form-input" type="email" id="login-email" placeholder="contact@entreprise.com" autocomplete="email"></div>
+        <div class="form-group" style="margin-top:12px;"><div class="form-label">Mot de passe</div><input class="form-input" type="password" id="login-pass" placeholder="Mot de passe" autocomplete="current-password"></div>
+        <div id="login-msg" class="auth-msg"></div>
+        <button class="btn btn-gold" style="width:100%;margin-top:16px;" onclick="handleLogin()">Se connecter</button>
+      </div>
+      <!-- Register form -->
+      <div id="form-register" style="display:none;">
+        <div class="form-group"><div class="form-label">Nom de l'entreprise / organisation</div><input class="form-input" type="text" id="reg-company" placeholder="Ex: WASI SAS, ONG Espoir, ..."></div>
+        <div class="form-group" style="margin-top:12px;"><div class="form-label">Email</div><input class="form-input" type="email" id="reg-email" placeholder="contact@entreprise.com" autocomplete="email"></div>
+        <div class="form-group" style="margin-top:12px;"><div class="form-label">Mot de passe</div><input class="form-input" type="password" id="reg-pass" placeholder="Choisir un mot de passe" autocomplete="new-password"></div>
+        <div class="form-group" style="margin-top:12px;"><div class="form-label">Confirmer le mot de passe</div><input class="form-input" type="password" id="reg-pass2" placeholder="Confirmer le mot de passe" autocomplete="new-password"></div>
+        <div id="reg-msg" class="auth-msg"></div>
+        <button class="btn btn-gold" style="width:100%;margin-top:16px;" onclick="handleRegister()">Creer le compte</button>
+      </div>
+      <div class="auth-footer">Vos donnees sont stockees localement sur votre appareil.</div>
+    </div>
+  </div>
 </body>
 </html>

@@ -8,6 +8,152 @@ let journalEntries = [...SAMPLE_JOURNAL];
 let searchTerm = "";
 let filterClass = null;
 
+// ═══════════════════════════════════════════════════════════
+// ACCOUNT MANAGEMENT (multi-company, localStorage)
+// ═══════════════════════════════════════════════════════════
+const ACCOUNTS_KEY = 'ohada_accounts';
+const SESSION_KEY  = 'ohada_session';
+const DATA_PREFIX  = 'ohada_data_';
+let currentCompanyId = null;
+
+function simpleHash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
+  return (h >>> 0).toString(16);
+}
+
+function getAccounts() {
+  try { return JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || '[]'); }
+  catch(e) { return []; }
+}
+function saveAccounts(arr) { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(arr)); }
+
+function saveCompanyData() {
+  if (!currentCompanyId) return;
+  const data = {
+    journalEntries,
+    openingBalances: Object.assign({}, OPENING_BALANCES),
+    currentRef,
+    sycebnlType
+  };
+  localStorage.setItem(DATA_PREFIX + currentCompanyId, JSON.stringify(data));
+}
+
+function loadCompanyData(id) {
+  const raw = localStorage.getItem(DATA_PREFIX + id);
+  if (!raw) return; // fresh company, keep defaults
+  try {
+    const data = JSON.parse(raw);
+    if (data.journalEntries) journalEntries = data.journalEntries;
+    if (data.openingBalances) {
+      // Clear and repopulate OPENING_BALANCES (it is const but mutable)
+      Object.keys(OPENING_BALANCES).forEach(k => delete OPENING_BALANCES[k]);
+      Object.assign(OPENING_BALANCES, data.openingBalances);
+    }
+    if (data.currentRef) currentRef = data.currentRef;
+    if (data.sycebnlType) sycebnlType = data.sycebnlType;
+    // Sync referentiel select
+    const sel = document.getElementById('referentiel-select');
+    if (sel) sel.value = currentRef;
+  } catch(e) { console.warn('loadCompanyData error', e); }
+}
+
+function loginCompany(id) {
+  currentCompanyId = id;
+  localStorage.setItem(SESSION_KEY, id);
+  loadCompanyData(id);
+  // Update topbar
+  const accounts = getAccounts();
+  const acct = accounts.find(a => a.id === id);
+  const badge = document.getElementById('company-name-display');
+  const logoutBtn = document.getElementById('btn-logout');
+  if (badge) { badge.textContent = acct ? acct.company : 'Mon compte'; badge.style.display = 'inline-block'; }
+  if (logoutBtn) logoutBtn.style.display = 'inline-block';
+  // Hide auth overlay
+  const overlay = document.getElementById('auth-overlay');
+  if (overlay) overlay.classList.remove('active');
+  render();
+}
+
+function logoutCompany() {
+  saveCompanyData();
+  currentCompanyId = null;
+  localStorage.removeItem(SESSION_KEY);
+  // Reset app state to defaults
+  journalEntries = [...SAMPLE_JOURNAL];
+  Object.keys(OPENING_BALANCES).forEach(k => delete OPENING_BALANCES[k]);
+  Object.assign(OPENING_BALANCES, DEFAULT_OPENING_BALANCES);
+  currentRef = 'syscohada';
+  sycebnlType = 'associations';
+  const sel = document.getElementById('referentiel-select');
+  if (sel) sel.value = 'syscohada';
+  // Hide topbar elements
+  const badge = document.getElementById('company-name-display');
+  const logoutBtn = document.getElementById('btn-logout');
+  if (badge) badge.style.display = 'none';
+  if (logoutBtn) logoutBtn.style.display = 'none';
+  // Show auth overlay
+  showAuthOverlay('login');
+}
+
+function showAuthOverlay(tab) {
+  const overlay = document.getElementById('auth-overlay');
+  if (overlay) overlay.classList.add('active');
+  showAuthTab(tab || 'login');
+}
+
+function showAuthTab(tab) {
+  document.getElementById('form-login').style.display = tab === 'login' ? '' : 'none';
+  document.getElementById('form-register').style.display = tab === 'register' ? '' : 'none';
+  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+}
+
+function handleLogin() {
+  const email = (document.getElementById('login-email').value || '').trim().toLowerCase();
+  const pass  = document.getElementById('login-pass').value || '';
+  const msg   = document.getElementById('login-msg');
+  msg.className = 'auth-msg';
+  if (!email || !pass) { msg.className = 'auth-msg error'; msg.textContent = 'Veuillez remplir tous les champs.'; return; }
+  const accounts = getAccounts();
+  const acct = accounts.find(a => a.email === email && a.passHash === simpleHash(pass));
+  if (!acct) { msg.className = 'auth-msg error'; msg.textContent = 'Email ou mot de passe incorrect.'; return; }
+  loginCompany(acct.id);
+}
+
+function handleRegister() {
+  const company = (document.getElementById('reg-company').value || '').trim();
+  const email   = (document.getElementById('reg-email').value || '').trim().toLowerCase();
+  const pass    = document.getElementById('reg-pass').value || '';
+  const pass2   = document.getElementById('reg-pass2').value || '';
+  const msg     = document.getElementById('reg-msg');
+  msg.className = 'auth-msg';
+  if (!company || !email || !pass) { msg.className = 'auth-msg error'; msg.textContent = 'Tous les champs sont obligatoires.'; return; }
+  if (pass !== pass2) { msg.className = 'auth-msg error'; msg.textContent = 'Les mots de passe ne correspondent pas.'; return; }
+  if (pass.length < 6) { msg.className = 'auth-msg error'; msg.textContent = 'Le mot de passe doit contenir au moins 6 caracteres.'; return; }
+  const accounts = getAccounts();
+  if (accounts.find(a => a.email === email)) { msg.className = 'auth-msg error'; msg.textContent = 'Cet email est deja utilise.'; return; }
+  const id = 'c_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  accounts.push({ id, company, email, passHash: simpleHash(pass), createdAt: new Date().toISOString() });
+  saveAccounts(accounts);
+  msg.className = 'auth-msg success';
+  msg.textContent = 'Compte cree ! Connexion en cours...';
+  setTimeout(() => loginCompany(id), 600);
+}
+
+function checkAuth() {
+  const sessionId = localStorage.getItem(SESSION_KEY);
+  if (sessionId) {
+    const accounts = getAccounts();
+    if (accounts.find(a => a.id === sessionId)) {
+      loginCompany(sessionId);
+      return;
+    }
+  }
+  // No valid session — show auth overlay
+  showAuthOverlay('login');
+}
+
 // Clock
 setInterval(() => {
   const el = document.getElementById("clock");
@@ -116,6 +262,7 @@ function render() {
     default: main.innerHTML = renderDashboard();
   }
   attachEvents();
+  if (currentCompanyId) saveCompanyData();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1235,5 +1382,5 @@ function showToast(msg, type) {
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .4s'; setTimeout(() => t.remove(), 400); }, 3500);
 }
 
-// Initial render
-render();
+// Initial auth check (shows login or loads company data)
+checkAuth();
