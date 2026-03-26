@@ -408,22 +408,7 @@ function renderBalance() {
 function importBalanceCsv(input) {
   const file = input.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const lines = e.target.result.split('\n').slice(1);
-    let count = 0;
-    lines.forEach(line => {
-      const cols = line.split(',');
-      if (cols.length < 4) return;
-      const code = cols[0].trim().replace(/"/g,'');
-      const n1d = parseFloat(cols[2])||0;
-      const n1c = parseFloat(cols[3])||0;
-      if (code) { OPENING_BALANCES[code] = {n1d, n1c}; count++; }
-    });
-    alert('Soldes d ouverture importes: ' + count + ' comptes mis a jour.');
-    render();
-  };
-  reader.readAsText(file);
+  handleDroppedFile(file);
 }
 
 function downloadBalanceTemplate() {
@@ -1095,6 +1080,159 @@ function attachEvents() {
       container.appendChild(div);
     });
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// DRAG & DROP FILE IMPORT
+// ═══════════════════════════════════════════════════════════
+(function () {
+  const overlay = document.getElementById('drop-overlay');
+  let dragCounter = 0;
+
+  document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    overlay.classList.add('active');
+  });
+  document.addEventListener('dragleave', () => {
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; overlay.classList.remove('active'); }
+  });
+  document.addEventListener('dragover', (e) => { e.preventDefault(); });
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    overlay.classList.remove('active');
+    const file = e.dataTransfer.files[0];
+    if (file) handleDroppedFile(file);
+  });
+})();
+
+function handleDroppedFile(file) {
+  const name = file.name.toLowerCase();
+
+  if (name.endsWith('.csv') || name.endsWith('.txt')) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const count = parseBalanceCsv(e.target.result);
+      if (count > 0) {
+        showToast(count + ' comptes importes depuis ' + file.name, 'success');
+        render();
+      } else {
+        showToast('Aucun compte detecte. Verifiez le format CSV.', 'error');
+      }
+    };
+    reader.readAsText(file);
+
+  } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+    if (typeof XLSX === 'undefined') {
+      showToast('Librairie Excel non chargee. Verifiez votre connexion.', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'binary' });
+        // Try to find a balance sheet (first sheet with account data)
+        let count = 0;
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        // Detect header row: look for a row with 'Compte' or numeric-looking first cell
+        let startRow = 1;
+        for (let i = 0; i < Math.min(rows.length, 10); i++) {
+          const first = String(rows[i][0]||'').trim();
+          if (first.toLowerCase().includes('compte') || /^\d{1,4}$/.test(first)) {
+            startRow = /^\d{1,4}$/.test(first) ? i : i + 1;
+            break;
+          }
+        }
+        rows.slice(startRow).forEach(row => {
+          const code = String(row[0]||'').replace(/\..*/, '').trim(); // strip .0
+          const n1d = parseFloat(row[2]) || 0;
+          const n1c = parseFloat(row[3]) || 0;
+          if (code && /^\d+$/.test(code)) {
+            OPENING_BALANCES[code] = { n1d, n1c };
+            count++;
+          }
+        });
+        if (count > 0) {
+          showToast(count + ' comptes importes depuis ' + file.name, 'success');
+          render();
+        } else {
+          showToast('Aucun compte trouve dans ' + file.name + '. Format attendu: Compte | Libelle | S.O.D | S.O.C', 'error');
+        }
+      } catch (err) {
+        showToast('Erreur lecture Excel: ' + err.message, 'error');
+      }
+    };
+    reader.readAsBinaryString(file);
+
+  } else if (name.endsWith('.json')) {
+    // JSON journal entries import
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        const entries = Array.isArray(data) ? data : (data.journal || data.ecritures || []);
+        let count = 0;
+        entries.forEach(entry => {
+          const d = parseFloat(entry.debit) || 0;
+          const c = parseFloat(entry.credit) || 0;
+          if (!entry.compte || (!d && !c)) return;
+          journalEntries.push({
+            id: journalEntries.length + 1,
+            date: entry.date || new Date().toISOString().split('T')[0],
+            journal: entry.journal || 'OD',
+            piece: entry.piece || ('IMP-' + String(journalEntries.length + 1).padStart(3, '0')),
+            compte: String(entry.compte),
+            libelle: entry.libelle || 'Import',
+            debit: d, credit: c,
+            ref: entry.ref || 'IMPORT'
+          });
+          count++;
+        });
+        if (count > 0) {
+          showToast(count + ' ecritures importees depuis ' + file.name, 'success');
+          render();
+        } else {
+          showToast('Aucune ecriture valide dans le fichier JSON.', 'error');
+        }
+      } catch (err) {
+        showToast('Erreur lecture JSON: ' + err.message, 'error');
+      }
+    };
+    reader.readAsText(file);
+
+  } else {
+    showToast('Format non supporte: ' + file.name + ' — Utiliser CSV, Excel (.xlsx) ou JSON', 'error');
+  }
+}
+
+function parseBalanceCsv(text) {
+  const lines = text.split('\n').slice(1);
+  let count = 0;
+  lines.forEach(line => {
+    const cols = line.split(',');
+    if (cols.length < 4) return;
+    const code = cols[0].trim().replace(/"/g, '');
+    const n1d = parseFloat(cols[2]) || 0;
+    const n1c = parseFloat(cols[3]) || 0;
+    if (code && /^\d+$/.test(code)) {
+      OPENING_BALANCES[code] = { n1d, n1c };
+      count++;
+    }
+  });
+  return count;
+}
+
+function showToast(msg, type) {
+  const container = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast toast-' + (type || 'info');
+  t.textContent = msg;
+  container.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .4s'; setTimeout(() => t.remove(), 400); }, 3500);
 }
 
 // Initial render

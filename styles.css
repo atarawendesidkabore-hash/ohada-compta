@@ -218,3 +218,46 @@ a { color: var(--gold); text-decoration: none; }
   .shell { min-height: calc(100vh - 44px); }
   .logo { font-size: 0.85rem; }
 }
+
+/* ========== DRAG & DROP ========== */
+.drop-overlay {
+  display: none;
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(3,11,21,0.9);
+  align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.drop-overlay.active { display: flex; pointer-events: all; }
+.drop-box {
+  text-align: center;
+  border: 3px dashed var(--gold);
+  border-radius: 20px;
+  padding: 60px 80px;
+  animation: pulse-border 1.2s ease-in-out infinite;
+}
+.drop-icon {
+  font-size: 3.5rem; color: var(--gold); margin-bottom: 16px;
+  animation: bounce 1s ease-in-out infinite;
+}
+.drop-title { font-size: 1.6rem; font-weight: 800; color: var(--gold); margin-bottom: 10px; font-family: var(--mono); }
+.drop-formats { color: var(--muted); font-size: 0.88rem; letter-spacing: 0.05em; }
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--gold); box-shadow: 0 0 0 0 rgba(200,146,42,0); }
+  50% { border-color: var(--gold-light); box-shadow: 0 0 24px 6px rgba(200,146,42,0.25); }
+}
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+/* ========== TOAST ========== */
+#toast-container { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 10px; z-index: 10000; }
+.toast {
+  padding: 12px 20px; border-radius: var(--radius); font-size: 0.86rem;
+  max-width: 360px; animation: slide-in .3s ease;
+}
+.toast-success { background: rgba(0,230,118,0.12); border: 1px solid var(--green); color: var(--green); }
+.toast-error   { background: rgba(255,82,82,0.12); border: 1px solid var(--red); color: var(--red); }
+.toast-info    { background: rgba(200,146,42,0.12); border: 1px solid var(--gold); color: var(--gold); }
+@keyframes slide-in { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+

@@ -54,7 +54,19 @@
     <main class="main" id="main-content"></main>
   </div>
 
+  <!-- SheetJS: Excel import support -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="data.js"></script>
   <script src="app.js"></script>
+  <!-- Drag & Drop overlay -->
+  <div id="drop-overlay" class="drop-overlay">
+    <div class="drop-box">
+      <div class="drop-icon">&#8659;</div>
+      <div class="drop-title">Deposer le fichier ici</div>
+      <div class="drop-formats">CSV &nbsp;|&nbsp; Excel .xlsx &nbsp;|&nbsp; JSON ecritures</div>
+    </div>
+  </div>
+  <!-- Toast notifications -->
+  <div id="toast-container"></div>
 </body>
 </html>
