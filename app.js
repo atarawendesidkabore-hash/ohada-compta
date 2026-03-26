@@ -24,6 +24,8 @@ function isCompanyProfileComplete() {
 const ACCOUNTS_KEY = 'ohada_accounts';
 const SESSION_KEY  = 'ohada_session';
 const DATA_PREFIX  = 'ohada_data_';
+const BF_LIASSE_PACKET_NAME = "BFA Liasse Fiscale Sys Normal SYSCOHADA Révisé DGI-BF[254]";
+const BF_LIASSE_DOWNLOAD_NAME = `${BF_LIASSE_PACKET_NAME}.xlsx`;
 let currentCompanyId = null;
 
 function simpleHash(str) {
@@ -236,6 +238,22 @@ function getPlan() {
 
 function fmt(n) { return n.toLocaleString("fr-FR"); }
 
+function formatDateValue(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString("fr-FR");
+}
+
+function getCurrentAccountMeta() {
+  const accounts = getAccounts();
+  return currentCompanyId ? accounts.find(a => a.id === currentCompanyId) : null;
+}
+
+function getCompanyDisplayName() {
+  const acct = getCurrentAccountMeta();
+  return currentCompanyDetails.raisonSociale || (acct ? acct.company : "");
+}
+
 function sensSpan(s) {
   if (s === "Debit") return '<span class="sens-debit">Debit</span>';
   if (s === "Credit") return '<span class="sens-credit">Credit</span>';
@@ -262,6 +280,265 @@ function computeBalances() {
     balances[e.compte].credit += e.credit;
   });
   return balances;
+}
+
+function getDsfPacketName() {
+  return currentRef === "sycebnl" ? "Liasse fiscale adaptee EBNL" : BF_LIASSE_PACKET_NAME;
+}
+
+function getDsfStatusRows() {
+  const bal = computeBalances();
+  const hasBalances = Object.keys(bal).length > 0;
+  const hasJournal = journalEntries.length > 0;
+  const hasImmos = Object.keys(bal).some((code) => code.startsWith("2") || code.startsWith("28"));
+  const hasTiers = Object.keys(bal).some((code) => code.startsWith("4"));
+  const profileComplete = isCompanyProfileComplete();
+
+  return [
+    { code: "DSF-01", label: "Bilan — Systeme normal", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Disponible a partir des soldes charges." : "Chargez une balance ou des ecritures." },
+    { code: "DSF-02", label: "Compte de resultat — Systeme normal", status: hasJournal ? "Pret" : hasBalances ? "A completer" : "En attente", hint: hasJournal ? "Les mouvements de l'exercice sont disponibles." : "Ajoutez les ecritures de l'exercice." },
+    { code: "DSF-03", label: "TAFIRE", status: hasJournal ? "A completer" : "En attente", hint: "Necessite les flux de l'exercice et la revue de cloture." },
+    { code: "DSF-04", label: "Tableau des immobilisations", status: hasImmos ? "A completer" : "En attente", hint: hasImmos ? "Des immobilisations ont ete detectees." : "Aucune immobilisation detectee." },
+    { code: "DSF-05", label: "Tableau des amortissements", status: hasImmos ? "A completer" : "En attente", hint: hasImmos ? "Prevoir les dotations et cumuls." : "Aucune base amortissable detectee." },
+    { code: "DSF-06", label: "Tableau des provisions", status: hasJournal ? "A completer" : "En attente", hint: "A completer selon vos ecritures d'inventaire." },
+    { code: "DSF-07", label: "Etat des creances et dettes", status: hasTiers ? "A completer" : "En attente", hint: hasTiers ? "Des comptes de tiers sont presents." : "Aucun compte de tiers detecte." },
+    { code: "DSF-08", label: "Tableau des resultat et soldes intermediaires", status: hasJournal ? "A completer" : "En attente", hint: "Genere a partir des mouvements de gestion." },
+    { code: "DSF-09", label: "Notes annexes", status: hasBalances ? "A completer" : "En attente", hint: "Completez les notes en fonction des etats produits." },
+    { code: "DSF-10", label: "Informations complementaires DGI", status: profileComplete ? "A completer" : "En attente", hint: profileComplete ? "La fiche entreprise est prete pour la liasse." : "Renseignez les informations legales et fiscales." },
+  ];
+}
+
+function getBalanceExportRows() {
+  const bal = computeBalances();
+  const plan = getPlan();
+  const comptes = Object.keys(bal).sort();
+  let totN1D = 0, totN1C = 0, totMvtD = 0, totMvtC = 0, totSD = 0, totSC = 0;
+
+  const rows = comptes.map(code => {
+    const account = plan.find(a => a.numero === code);
+    const n1d = bal[code].n1d || 0;
+    const n1c = bal[code].n1c || 0;
+    const mvtD = bal[code].debit - n1d;
+    const mvtC = bal[code].credit - n1c;
+    const solde = bal[code].debit - bal[code].credit;
+    const soldeD = solde > 0 ? solde : 0;
+    const soldeC = solde < 0 ? Math.abs(solde) : 0;
+    totN1D += n1d;
+    totN1C += n1c;
+    totMvtD += mvtD;
+    totMvtC += mvtC;
+    totSD += soldeD;
+    totSC += soldeC;
+    return [code, account ? account.libelle : "Inconnu", account ? account.classe : "", n1d, n1c, mvtD, mvtC, soldeD, soldeC];
+  });
+
+  rows.unshift(["Compte", "Libelle", "Classe", "S.O. Debit", "S.O. Credit", "Mvt Debit", "Mvt Credit", "Solde Debit", "Solde Credit"]);
+  rows.push(["TOTAUX", "", "", totN1D, totN1C, totMvtD, totMvtC, totSD, totSC]);
+  return rows;
+}
+
+function getBilanExportRows() {
+  const bal = computeBalances();
+
+  function sumByPrefix(prefixes) {
+    let total = 0;
+    Object.keys(bal).forEach(code => {
+      if (prefixes.some(prefix => code.startsWith(String(prefix)))) {
+        total += bal[code].debit - bal[code].credit;
+      }
+    });
+    return total;
+  }
+
+  const actifRows = BILAN_STRUCTURE.actif.map(section => ({
+    section: section.section,
+    total: sumByPrefix([...section.accounts, ...(section.amort || [])])
+  }));
+
+  const passifRows = BILAN_STRUCTURE.passif.map(section => ({
+    section: section.section,
+    total: -sumByPrefix(section.accounts)
+  }));
+
+  let produits = 0;
+  let charges = 0;
+  Object.keys(bal).forEach(code => {
+    const mvtD = (bal[code].debit || 0) - (bal[code].n1d || 0);
+    const mvtC = (bal[code].credit || 0) - (bal[code].n1c || 0);
+    const c = parseInt(code[0], 10);
+    if (c === 7 || code.startsWith("82") || code.startsWith("84")) produits += mvtC - mvtD;
+    if (c === 6 || code.startsWith("81") || code.startsWith("83") || code.startsWith("85") || code.startsWith("87") || code.startsWith("89")) charges += mvtD - mvtC;
+  });
+
+  const resultatExercice = produits - charges;
+  if (passifRows.length > 0) passifRows[0].total += resultatExercice;
+
+  const rows = [["ACTIF", "Montant (XOF)", "", "PASSIF", "Montant (XOF)"]];
+  const rowCount = Math.max(actifRows.length, passifRows.length);
+  for (let i = 0; i < rowCount; i++) {
+    rows.push([
+      actifRows[i] ? actifRows[i].section : "",
+      actifRows[i] ? Math.abs(actifRows[i].total) : "",
+      "",
+      passifRows[i] ? passifRows[i].section : "",
+      passifRows[i] ? Math.abs(passifRows[i].total) : "",
+    ]);
+  }
+
+  const totalActif = actifRows.reduce((sum, row) => sum + row.total, 0);
+  const totalPassif = passifRows.reduce((sum, row) => sum + row.total, 0);
+  rows.push(["TOTAL ACTIF", Math.abs(totalActif), "", "TOTAL PASSIF", Math.abs(totalPassif)]);
+  rows.push(["RESULTAT EXERCICE", resultatExercice, "", "EQUILIBRE", Math.abs(totalActif - totalPassif) < 1 ? "OK" : "ECART"]);
+  return rows;
+}
+
+function getResultatExportRows() {
+  const bal = computeBalances();
+  let totalProduits = 0;
+  let totalCharges = 0;
+
+  const rows = RESULTAT_STRUCTURE.map(section => {
+    let total = 0;
+    Object.keys(bal).forEach(code => {
+      if (section.comptes.some(prefix => code.startsWith(prefix))) {
+        const mvtD = (bal[code].debit || 0) - (bal[code].n1d || 0);
+        const mvtC = (bal[code].credit || 0) - (bal[code].n1c || 0);
+        total += section.sens === "credit" ? mvtC - mvtD : mvtD - mvtC;
+      }
+    });
+    if (section.sens === "credit") totalProduits += total;
+    else totalCharges += total;
+    return [section.section, section.sens === "credit" ? "Produit" : "Charge", Math.abs(total)];
+  });
+
+  rows.unshift(["Section", "Type", "Montant (XOF)"]);
+  rows.push(["TOTAL PRODUITS", "", totalProduits]);
+  rows.push(["TOTAL CHARGES", "", totalCharges]);
+  rows.push(["RESULTAT NET", totalProduits - totalCharges >= 0 ? "Benefice" : "Perte", Math.abs(totalProduits - totalCharges)]);
+  return rows;
+}
+
+function getAmortissementExportRows() {
+  const bal = computeBalances();
+  const plan = getPlan();
+  const immos = plan.filter(a => a.classe === 2 && a.sens === "Debit" && bal[a.numero]);
+  const durees = {"21":5,"211":5,"212":5,"213":10,"214":10,"22":0,"23":20,"231":20,"232":20,"234":10,"235":7,"24":5,"241":5,"242":5,"244":3,"245":5,"246":7,"248":5};
+
+  function amortCode(code) {
+    if (code.startsWith("21")) return "281";
+    if (code.startsWith("22")) return "282";
+    if (code.startsWith("23")) return "283";
+    return "284";
+  }
+
+  const rows = [["Compte", "Libelle", "VBO", "Duree", "Taux %", "Cumul N-1", "Dotation N", "Cumul N", "VNC"]];
+  immos.forEach(account => {
+    const vbo = bal[account.numero].debit;
+    if (!vbo) return;
+    const ac = amortCode(account.numero);
+    const cumulN1 = ac && bal[ac] ? (bal[ac].n1c || 0) : 0;
+    const duree = durees[account.numero] || 5;
+    const taux = duree > 0 ? Math.round(10000 / duree) / 100 : 0;
+    const dotation = duree > 0 ? Math.round(vbo / duree) : 0;
+    const cumulN = cumulN1 + dotation;
+    const vnc = Math.max(0, vbo - cumulN);
+    rows.push([account.numero, account.libelle, vbo, duree || "", taux || "", cumulN1, dotation, cumulN, vnc]);
+  });
+  return rows;
+}
+
+function appendWorkbookSheet(workbook, name, rows, widths, mergeAcross) {
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  if (Array.isArray(widths)) ws["!cols"] = widths.map(width => ({ wch: width }));
+  if (mergeAcross) ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: mergeAcross } }];
+  XLSX.utils.book_append_sheet(workbook, ws, name);
+}
+
+function downloadBfaLiasseFiscale() {
+  if (currentRef !== "syscohada") {
+    showToast("Le fichier BF[254] est reserve au referentiel SYSCOHADA. Basculez sur SYSCOHADA avant le telechargement.", "error");
+    return;
+  }
+
+  if (typeof XLSX === "undefined") {
+    showToast("Librairie Excel non chargee. Verifiez votre connexion.", "error");
+    return;
+  }
+
+  const acct = getCurrentAccountMeta();
+  const companyName = getCompanyDisplayName();
+  const dsfStatuses = getDsfStatusRows();
+  const now = new Date();
+  const workbook = XLSX.utils.book_new();
+  workbook.Props = {
+    Title: BF_LIASSE_PACKET_NAME,
+    Subject: "Liasse fiscale Burkina Faso SYSCOHADA",
+    Author: "OHADA COMPTA",
+    Company: companyName || "OHADA COMPTA",
+    CreatedDate: now
+  };
+
+  const coverRows = [
+    [BF_LIASSE_PACKET_NAME],
+    [""],
+    ["Genere depuis OHADA COMPTA", now.toLocaleString("fr-FR")],
+    [""],
+    ["Raison sociale", currentCompanyDetails.raisonSociale || (acct ? acct.company : "")],
+    ["Sigle usuel", currentCompanyDetails.sigleUsuel || ""],
+    ["Forme juridique", currentCompanyDetails.formeJuridique || ""],
+    ["RCCM", currentCompanyDetails.rccm || ""],
+    ["NIF / IFU", currentCompanyDetails.nif || ""],
+    ["Siege social", currentCompanyDetails.siegeSocial || ""],
+    ["Activite principale", currentCompanyDetails.activitePrincipale || ""],
+    ["Capital social (XOF)", currentCompanyDetails.capitalSocial || ""],
+    ["Regime fiscal", currentCompanyDetails.regimeFiscal || ""],
+    ["Pays", currentCompanyDetails.pays || "Burkina Faso"],
+    ["Exercice du", formatDateValue(currentCompanyDetails.exerciceDu || "")],
+    ["Exercice au", formatDateValue(currentCompanyDetails.exerciceAu || "")],
+    ["Telephone", currentCompanyDetails.tel || ""],
+    ["Email", currentCompanyDetails.emailCompta || (acct ? acct.email : "")],
+    ["Expert-comptable", currentCompanyDetails.expertComptable || ""],
+    ["Commissaire aux comptes", currentCompanyDetails.commissaire || ""],
+    ["Numero de teledeclarant (NES)", currentCompanyDetails.nes || ""],
+    [""],
+    ["Etat du dossier", `${dsfStatuses.filter(item => item.status === "Pret").length}/${dsfStatuses.length} rubriques pretes`],
+    ["Observations", "Classeur genere automatiquement a partir des donnees saisies dans OHADA COMPTA."]
+  ];
+  appendWorkbookSheet(workbook, "Couverture", coverRows, [36, 55], 3);
+
+  const checklistRows = [["Code", "Rubrique", "Statut", "Observation"]]
+    .concat(dsfStatuses.map(item => [item.code, item.label, item.status, item.hint]));
+  appendWorkbookSheet(workbook, "DSF_Checklist", checklistRows, [12, 42, 16, 60]);
+
+  const journalRows = [["Date", "Journal", "Piece", "Compte", "Libelle", "Debit", "Credit", "Reference"]]
+    .concat(journalEntries.map(entry => [entry.date, entry.journal, entry.piece, entry.compte, entry.libelle, entry.debit, entry.credit, entry.ref]));
+  appendWorkbookSheet(workbook, "Journal", journalRows, [14, 10, 14, 12, 44, 16, 16, 18]);
+
+  appendWorkbookSheet(workbook, "Balance", getBalanceExportRows(), [14, 36, 10, 16, 16, 16, 16, 16, 16]);
+  appendWorkbookSheet(workbook, "Bilan", getBilanExportRows(), [30, 18, 6, 30, 18]);
+  appendWorkbookSheet(workbook, "Resultat", getResultatExportRows(), [42, 16, 20]);
+  appendWorkbookSheet(workbook, "Amortissements", getAmortissementExportRows(), [12, 36, 14, 10, 10, 14, 14, 14, 14]);
+  appendWorkbookSheet(workbook, "Annexes", [
+    ["Notes annexes"],
+    [""],
+    ["Note 1", "Regles et methodes comptables"],
+    ["Note 2", "Immobilisations incorporelles et corporelles"],
+    ["Note 3", "Tableau des amortissements"],
+    ["Note 4", "Immobilisations financieres"],
+    ["Note 5", "Stocks et en-cours"],
+    ["Note 6", "Creances et dettes"],
+    ["Note 7", "Tresorerie"],
+    ["Note 8", "Capitaux propres"],
+    ["Note 9", "Emprunts et dettes financieres"],
+    ["Note 10", "Charges de personnel"],
+    ["Note 11", "Engagements hors bilan"],
+    ["Note 12", "Evenements posterieurs a la cloture"],
+    ["Note 13", "Parties liees"],
+    ["Note 14", "Informations fiscales (DSF)"],
+  ], [12, 48], 2);
+
+  XLSX.writeFile(workbook, BF_LIASSE_DOWNLOAD_NAME, { compression: true });
+  showToast(`Classeur ${BF_LIASSE_DOWNLOAD_NAME} genere avec succes.`, "success");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1192,27 +1469,8 @@ function renderCloture() {
 // DSF / DGI
 // ═══════════════════════════════════════════════════════════
 function renderDSF() {
-  const bal = computeBalances();
-  const hasBalances = Object.keys(bal).length > 0;
-  const hasJournal = journalEntries.length > 0;
-  const hasImmos = Object.keys(bal).some((code) => code.startsWith("2") || code.startsWith("28"));
-  const hasTiers = Object.keys(bal).some((code) => code.startsWith("4"));
-  const profileComplete = isCompanyProfileComplete();
-  const packetName = currentRef === "sycebnl"
-    ? "Liasse fiscale adaptee EBNL"
-    : "BFA Liasse Fiscale Sys Normal SYSCOHADA Revise DGI-BF[254]";
-  const statuses = [
-    { code: "DSF-01", label: "Bilan — Systeme normal", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Disponible a partir des soldes charges." : "Chargez une balance ou des ecritures." },
-    { code: "DSF-02", label: "Compte de resultat — Systeme normal", status: hasJournal ? "Pret" : hasBalances ? "A completer" : "En attente", hint: hasJournal ? "Les mouvements de l'exercice sont disponibles." : "Ajoutez les ecritures de l'exercice." },
-    { code: "DSF-03", label: "TAFIRE", status: hasJournal ? "A completer" : "En attente", hint: "Necessite les flux de l'exercice et la revue de cloture." },
-    { code: "DSF-04", label: "Tableau des immobilisations", status: hasImmos ? "A completer" : "En attente", hint: hasImmos ? "Des immobilisations ont ete detectees." : "Aucune immobilisation detectee." },
-    { code: "DSF-05", label: "Tableau des amortissements", status: hasImmos ? "A completer" : "En attente", hint: hasImmos ? "Prevoir les dotations et cumuls." : "Aucune base amortissable detectee." },
-    { code: "DSF-06", label: "Tableau des provisions", status: hasJournal ? "A completer" : "En attente", hint: "A completer selon vos ecritures d'inventaire." },
-    { code: "DSF-07", label: "Etat des creances et dettes", status: hasTiers ? "A completer" : "En attente", hint: hasTiers ? "Des comptes de tiers sont presents." : "Aucun compte de tiers detecte." },
-    { code: "DSF-08", label: "Tableau des resultat et soldes intermediaires", status: hasJournal ? "A completer" : "En attente", hint: "Genere a partir des mouvements de gestion." },
-    { code: "DSF-09", label: "Notes annexes", status: hasBalances ? "A completer" : "En attente", hint: "Completez les notes en fonction des etats produits." },
-    { code: "DSF-10", label: "Informations complementaires DGI", status: profileComplete ? "A completer" : "En attente", hint: profileComplete ? "La fiche entreprise est prete pour la liasse." : "Renseignez les informations legales et fiscales." },
-  ];
+  const packetName = getDsfPacketName();
+  const statuses = getDsfStatusRows();
   const readyCount = statuses.filter((item) => item.status === "Pret").length;
 
   function getStatusColor(status) {
@@ -1223,7 +1481,13 @@ function renderDSF() {
 
   return `
     <div class="card">
-      <div class="card-header"><div class="card-title">Declaration Statistique et Fiscale (DSF)</div></div>
+      <div class="card-header">
+        <div>
+          <div class="card-title">Declaration Statistique et Fiscale (DSF)</div>
+          <div class="card-subtitle">Export du classeur fiscal Burkina Faso depuis les donnees de l'application.</div>
+        </div>
+        <button class="btn btn-gold" onclick="downloadBfaLiasseFiscale()">Telecharger BF[254] (.xlsx)</button>
+      </div>
       <div class="info-box" style="margin-bottom:16px;">
         <strong>Packet cible:</strong> ${packetName}<br><br>
         La DSF est la declaration fiscale annuelle obligatoire dans les pays OHADA. Elle comprend la liasse comptable normalisee conforme au SYSCOHADA, transmise a la Direction Generale des Impots (DGI). Etat d'avancement actuel: <strong>${readyCount}/${statuses.length}</strong> rubriques pretes.
@@ -1568,12 +1832,20 @@ function renderParametres() {
           </select>
         </div>
         <div class="form-group">
+          <div class="form-label">Sigle usuel</div>
+          <input class="form-input" id="p-sigleUsuel" value="${d.sigleUsuel || ''}" placeholder="Sigle ou abreviation">
+        </div>
+        <div class="form-group">
           <div class="form-label">RCCM</div>
           <input class="form-input" id="p-rccm" value="${d.rccm || ''}" placeholder="Numero RCCM">
         </div>
         <div class="form-group">
           <div class="form-label">NIF (Numero d'Identification Fiscale)</div>
           <input class="form-input" id="p-nif" value="${d.nif || ''}" placeholder="Numero d'identification fiscale">
+        </div>
+        <div class="form-group">
+          <div class="form-label">N° de teledeclarant (NES)</div>
+          <input class="form-input" id="p-nes" value="${d.nes || ''}" placeholder="Numero NES">
         </div>
         <div class="form-group" style="grid-column:1/-1;">
           <div class="form-label">Siege social</div>
@@ -1659,7 +1931,7 @@ function renderParametres() {
 }
 
 function saveParametres() {
-  const fields = ['raisonSociale','formeJuridique','rccm','nif','siegeSocial','activitePrincipale',
+  const fields = ['raisonSociale','formeJuridique','sigleUsuel','rccm','nif','nes','siegeSocial','activitePrincipale',
                   'capitalSocial','regimeFiscal','pays','exerciceDu','exerciceAu',
                   'tel','emailCompta','expertComptable','commissaire',
                   'tauxIS','tauxIMF','tauxTVA'];
