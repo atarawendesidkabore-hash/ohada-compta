@@ -8,9 +8,28 @@ let journalEntries = [];
 let searchTerm = "";
 let filterClass = null;
 let currentCompanyDetails = {};
+const COMPANY_PROFILE_FIELDS = [
+  "raisonSociale",
+  "formeJuridique",
+  "sigleUsuel",
+  "rccm",
+  "nif",
+  "nes",
+  "siegeSocial",
+  "activitePrincipale",
+  "capitalSocial",
+  "regimeFiscal",
+  "pays",
+  "exerciceDu",
+  "exerciceAu",
+  "tel",
+  "emailCompta",
+  "expertComptable",
+  "commissaireAuxComptes"
+];
 
 function hasCompanyProfileData() {
-  return Object.values(currentCompanyDetails).some((value) => String(value || "").trim() !== "");
+  return COMPANY_PROFILE_FIELDS.some((key) => String(currentCompanyDetails[key] || "").trim() !== "");
 }
 
 function isCompanyProfileComplete() {
@@ -28,7 +47,32 @@ const BF_LIASSE_PACKET_NAME = "BFA Liasse Fiscale Sys Normal SYSCOHADA Révisé 
 const BF_LIASSE_DOWNLOAD_NAME = `${BF_LIASSE_PACKET_NAME}.xlsx`;
 const EXACT_LIASSE_TEMPLATE_PATH = "LIASSE.xlsx";
 const EXACT_LIASSE_DOWNLOAD_NAME = "LIASSE.xlsx";
+const EXACT_FORECAST_TEMPLATE_PATH = "PLAN_FINANCIER_PREVISIONNEL.xlsx";
+const EXACT_FORECAST_DOWNLOAD_NAME = "Modele-Excel-plan-financier-previsionnel-entreprise.xlsx";
+const EXACT_FORECAST_INPUT_SHEET_NAME = "Donn\u00e9es \u00e0 saisir";
+const EXACT_FORECAST_PRINT_SHEET_NAME = "Plan financier \u00e0 imprimer";
+const OHADA_SITE_HOME_URL = "https://www.ohada.com/";
+const OHADA_SITE_NEWS_URL = "https://www.ohada.com/actualite.html";
+const OHADA_WATCH_STATE_KEY = "ohada_watch_state";
 let currentCompanyId = null;
+let ohadaWatchTickStarted = false;
+
+function loadOhadaWatchState() {
+  try {
+    const raw = localStorage.getItem(OHADA_WATCH_STATE_KEY);
+    if (!raw) return { lastRefreshDay: "", lastRefreshAt: "", frameUrl: "" };
+    const parsed = JSON.parse(raw);
+    return {
+      lastRefreshDay: String(parsed.lastRefreshDay || ""),
+      lastRefreshAt: String(parsed.lastRefreshAt || ""),
+      frameUrl: String(parsed.frameUrl || "")
+    };
+  } catch (e) {
+    return { lastRefreshDay: "", lastRefreshAt: "", frameUrl: "" };
+  }
+}
+
+let ohadaWatchState = loadOhadaWatchState();
 
 function simpleHash(str) {
   let h = 5381;
@@ -246,6 +290,76 @@ function formatDateValue(value) {
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString("fr-FR");
 }
 
+function formatDateTimeValue(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString("fr-FR");
+}
+
+function parseIsoDate(value) {
+  if (!value) return null;
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatIsoDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addYearsToIsoDate(value, years = 1) {
+  const parsed = parseIsoDate(value);
+  if (!parsed) return "";
+  const shifted = new Date(parsed);
+  shifted.setFullYear(shifted.getFullYear() + years);
+  return formatIsoDate(shifted);
+}
+
+function saveOhadaWatchState() {
+  localStorage.setItem(OHADA_WATCH_STATE_KEY, JSON.stringify(ohadaWatchState));
+}
+
+function buildOhadaWatchFrameUrl() {
+  const separator = OHADA_SITE_HOME_URL.includes("?") ? "&" : "?";
+  return `${OHADA_SITE_HOME_URL}${separator}source=ohada-compta&t=${Date.now()}`;
+}
+
+function ensureOhadaWatchDailyRefresh(force = false) {
+  const todayKey = new Date().toISOString().slice(0, 10);
+  if (force || ohadaWatchState.lastRefreshDay !== todayKey || !ohadaWatchState.frameUrl) {
+    ohadaWatchState = {
+      lastRefreshDay: todayKey,
+      lastRefreshAt: new Date().toISOString(),
+      frameUrl: buildOhadaWatchFrameUrl()
+    };
+    saveOhadaWatchState();
+  }
+  return ohadaWatchState;
+}
+
+function startOhadaWatchTicker() {
+  if (ohadaWatchTickStarted) return;
+  ohadaWatchTickStarted = true;
+  window.setInterval(() => {
+    if (currentTab !== "veille") return;
+    const previousDay = ohadaWatchState.lastRefreshDay;
+    ensureOhadaWatchDailyRefresh(false);
+    if (ohadaWatchState.lastRefreshDay !== previousDay) render();
+  }, 60000);
+}
+
+function refreshOhadaWatch() {
+  ensureOhadaWatchDailyRefresh(true);
+  if (currentTab === "veille") render();
+}
+
+function openOhadaWebsite(url = OHADA_SITE_HOME_URL) {
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 function getCurrentAccountMeta() {
   const accounts = getAccounts();
   return currentCompanyId ? accounts.find(a => a.id === currentCompanyId) : null;
@@ -282,6 +396,232 @@ function computeBalances() {
     balances[e.compte].credit += e.credit;
   });
   return balances;
+}
+
+function isBalancedAmount(totalDebit, totalCredit, tolerance = 0.005) {
+  return Math.abs((totalDebit || 0) - (totalCredit || 0)) < tolerance;
+}
+
+function getOpeningBalanceSummary(balanceMap = OPENING_BALANCES) {
+  let totalDebit = 0;
+  let totalCredit = 0;
+  let count = 0;
+
+  Object.keys(balanceMap).forEach((code) => {
+    const row = balanceMap[code] || {};
+    const n1d = Number(row.n1d) || 0;
+    const n1c = Number(row.n1c) || 0;
+    if (n1d !== 0 || n1c !== 0) count++;
+    totalDebit += n1d;
+    totalCredit += n1c;
+  });
+
+  return {
+    count,
+    totalDebit,
+    totalCredit,
+    gap: totalDebit - totalCredit,
+    isBalanced: isBalancedAmount(totalDebit, totalCredit)
+  };
+}
+
+function getComputedBalanceSummary(bal = computeBalances()) {
+  let totalDebit = 0;
+  let totalCredit = 0;
+
+  Object.keys(bal).forEach((code) => {
+    const row = bal[code] || {};
+    totalDebit += Number(row.debit) || 0;
+    totalCredit += Number(row.credit) || 0;
+  });
+
+  return {
+    totalDebit,
+    totalCredit,
+    gap: totalDebit - totalCredit,
+    isBalanced: isBalancedAmount(totalDebit, totalCredit)
+  };
+}
+
+function replaceOpeningBalances(nextBalances) {
+  Object.keys(OPENING_BALANCES).forEach((code) => delete OPENING_BALANCES[code]);
+  Object.keys(nextBalances).forEach((code) => {
+    const row = nextBalances[code] || {};
+    OPENING_BALANCES[code] = {
+      n1d: Number(row.n1d) || 0,
+      n1c: Number(row.n1c) || 0
+    };
+  });
+}
+
+function mergeOpeningNet(target, code, signedNet) {
+  if (!code || Math.abs(Number(signedNet) || 0) < 0.005) return;
+  const current = ((target[code] && target[code].n1d) || 0) - ((target[code] && target[code].n1c) || 0);
+  const next = current + signedNet;
+  target[code] = {
+    n1d: next > 0 ? next : 0,
+    n1c: next < 0 ? Math.abs(next) : 0
+  };
+}
+
+function findAccountByCode(code, plan = getPlan()) {
+  const normalized = String(code || "").trim();
+  if (!normalized) return null;
+
+  let fallback = null;
+  for (const account of plan) {
+    if (account.numero === normalized) return account;
+    if (normalized.startsWith(account.numero) && (!fallback || account.numero.length > fallback.numero.length)) {
+      fallback = account;
+    }
+  }
+  return fallback;
+}
+
+function computeResultatExercice(bal = computeBalances()) {
+  let produits = 0;
+  let charges = 0;
+
+  Object.keys(bal).forEach((code) => {
+    const row = bal[code] || {};
+    const mvtD = (row.debit || 0) - (row.n1d || 0);
+    const mvtC = (row.credit || 0) - (row.n1c || 0);
+    const classe = parseInt(String(code)[0], 10);
+    if (classe === 7 || code.startsWith("82") || code.startsWith("84")) produits += mvtC - mvtD;
+    if (classe === 6 || code.startsWith("81") || code.startsWith("83") || code.startsWith("85") || code.startsWith("87") || code.startsWith("89")) {
+      charges += mvtD - mvtC;
+    }
+  });
+
+  return produits - charges;
+}
+
+function getClotureSnapshot() {
+  const bal = computeBalances();
+  const plan = getPlan();
+  const profileComplete = isCompanyProfileComplete();
+  const exerciceDu = currentCompanyDetails.exerciceDu || "";
+  const exerciceAu = currentCompanyDetails.exerciceAu || "";
+  const exerciseStartDate = parseIsoDate(exerciceDu);
+  const exerciseEndDate = parseIsoDate(exerciceAu);
+  const validDates = !!(exerciseStartDate && exerciseEndDate && exerciseEndDate >= exerciseStartDate);
+  const balanceSummary = getComputedBalanceSummary(bal);
+  const hasData = Object.keys(bal).length > 0;
+  const carryforward = {};
+
+  Object.keys(bal).forEach((code) => {
+    const account = findAccountByCode(code, plan);
+    const classe = account && account.classe ? account.classe : parseInt(String(code)[0], 10);
+    if (![1, 2, 3, 4, 5].includes(classe)) return;
+    const net = (bal[code].debit || 0) - (bal[code].credit || 0);
+    mergeOpeningNet(carryforward, code, net);
+  });
+
+  const resultatExercice = computeResultatExercice(bal);
+  mergeOpeningNet(carryforward, resultatExercice >= 0 ? "121" : "129", -resultatExercice);
+
+  const carryforwardSummary = getOpeningBalanceSummary(carryforward);
+  const nextExerciceDu = validDates ? addYearsToIsoDate(exerciceDu, 1) : "";
+  const nextExerciceAu = validDates ? addYearsToIsoDate(exerciceAu, 1) : "";
+
+  return {
+    bal,
+    profileComplete,
+    exerciceDu,
+    exerciceAu,
+    validDates,
+    hasData,
+    balanceSummary,
+    resultatExercice,
+    carryforward,
+    carryforwardSummary,
+    nextExerciceDu,
+    nextExerciceAu,
+    canClose: profileComplete && validDates && hasData && balanceSummary.isBalanced && carryforwardSummary.isBalanced
+  };
+}
+
+function getBilanSnapshot() {
+  const bal = computeBalances();
+  const plan = getPlan();
+  const actifRows = BILAN_STRUCTURE.actif.map(section => ({ section: section.section, total: 0 }));
+  const passifRows = BILAN_STRUCTURE.passif.map(section => ({ section: section.section, total: 0 }));
+  const actifImmobilise = BILAN_STRUCTURE.actif[0].section;
+  const actifCirculant = BILAN_STRUCTURE.actif[1].section;
+  const tresorerieActif = BILAN_STRUCTURE.actif[2].section;
+  const capitauxPropres = BILAN_STRUCTURE.passif[0].section;
+  const dettesFinancieres = BILAN_STRUCTURE.passif[1].section;
+  const passifCirculant = BILAN_STRUCTURE.passif[2].section;
+  const tresoreriePassif = BILAN_STRUCTURE.passif[3].section;
+
+  function addSectionTotal(rows, sectionName, amount) {
+    const target = rows.find((row) => row.section === sectionName);
+    if (target) target.total += amount;
+  }
+
+  Object.keys(bal).forEach((code) => {
+    const row = bal[code] || {};
+    const net = (row.debit || 0) - (row.credit || 0);
+    if (Math.abs(net) < 0.005) return;
+
+    const account = findAccountByCode(code, plan);
+    const classe = account && account.classe ? account.classe : parseInt(String(code)[0], 10);
+    if (![1, 2, 3, 4, 5].includes(classe)) return;
+
+    if (classe === 1) {
+      addSectionTotal(passifRows, String(code).startsWith("16") ? dettesFinancieres : capitauxPropres, -net);
+      return;
+    }
+
+    if (classe === 2) {
+      addSectionTotal(actifRows, actifImmobilise, net);
+      return;
+    }
+
+    if (classe === 3) {
+      addSectionTotal(actifRows, actifCirculant, net);
+      return;
+    }
+
+    if (classe === 4) {
+      let goesToActif = net >= 0;
+      if (account && account.sens === "Credit") goesToActif = net > 0;
+      if (account && account.sens === "Debit") goesToActif = net >= 0;
+
+      addSectionTotal(
+        goesToActif ? actifRows : passifRows,
+        goesToActif ? actifCirculant : passifCirculant,
+        goesToActif ? net : -net
+      );
+      return;
+    }
+
+    const naturalPassiveTreasury = String(code).startsWith("56") || (account && account.sens === "Credit");
+    const goesToActif = naturalPassiveTreasury ? net > 0 : net >= 0;
+    addSectionTotal(
+      goesToActif ? actifRows : passifRows,
+      goesToActif ? tresorerieActif : tresoreriePassif,
+      goesToActif ? net : -net
+    );
+  });
+
+  const resultatExercice = computeResultatExercice(bal);
+  addSectionTotal(passifRows, capitauxPropres, resultatExercice);
+
+  const totalActif = actifRows.reduce((sum, row) => sum + row.total, 0);
+  const totalPassif = passifRows.reduce((sum, row) => sum + row.total, 0);
+  const balanceSummary = getComputedBalanceSummary(bal);
+
+  return {
+    bal,
+    actifRows,
+    passifRows,
+    resultatExercice,
+    totalActif,
+    totalPassif,
+    balanceSummary,
+    isBalanced: balanceSummary.isBalanced && isBalancedAmount(totalActif, totalPassif)
+  };
 }
 
 function getDsfPacketName() {
@@ -340,41 +680,7 @@ function getBalanceExportRows() {
 }
 
 function getBilanExportRows() {
-  const bal = computeBalances();
-
-  function sumByPrefix(prefixes) {
-    let total = 0;
-    Object.keys(bal).forEach(code => {
-      if (prefixes.some(prefix => code.startsWith(String(prefix)))) {
-        total += bal[code].debit - bal[code].credit;
-      }
-    });
-    return total;
-  }
-
-  const actifRows = BILAN_STRUCTURE.actif.map(section => ({
-    section: section.section,
-    total: sumByPrefix([...section.accounts, ...(section.amort || [])])
-  }));
-
-  const passifRows = BILAN_STRUCTURE.passif.map(section => ({
-    section: section.section,
-    total: -sumByPrefix(section.accounts)
-  }));
-
-  let produits = 0;
-  let charges = 0;
-  Object.keys(bal).forEach(code => {
-    const mvtD = (bal[code].debit || 0) - (bal[code].n1d || 0);
-    const mvtC = (bal[code].credit || 0) - (bal[code].n1c || 0);
-    const c = parseInt(code[0], 10);
-    if (c === 7 || code.startsWith("82") || code.startsWith("84")) produits += mvtC - mvtD;
-    if (c === 6 || code.startsWith("81") || code.startsWith("83") || code.startsWith("85") || code.startsWith("87") || code.startsWith("89")) charges += mvtD - mvtC;
-  });
-
-  const resultatExercice = produits - charges;
-  if (passifRows.length > 0) passifRows[0].total += resultatExercice;
-
+  const { actifRows, passifRows, resultatExercice, totalActif, totalPassif, isBalanced, balanceSummary } = getBilanSnapshot();
   const rows = [["ACTIF", "Montant (XOF)", "", "PASSIF", "Montant (XOF)"]];
   const rowCount = Math.max(actifRows.length, passifRows.length);
   for (let i = 0; i < rowCount; i++) {
@@ -387,10 +693,11 @@ function getBilanExportRows() {
     ]);
   }
 
-  const totalActif = actifRows.reduce((sum, row) => sum + row.total, 0);
-  const totalPassif = passifRows.reduce((sum, row) => sum + row.total, 0);
   rows.push(["TOTAL ACTIF", Math.abs(totalActif), "", "TOTAL PASSIF", Math.abs(totalPassif)]);
-  rows.push(["RESULTAT EXERCICE", resultatExercice, "", "EQUILIBRE", Math.abs(totalActif - totalPassif) < 1 ? "OK" : "ECART"]);
+  rows.push(["RESULTAT EXERCICE", resultatExercice, "", "EQUILIBRE", isBalanced ? "OK" : "ECART"]);
+  if (!balanceSummary.isBalanced) {
+    rows.push(["BALANCE GENERALE", "", "", "ECART SOURCE", Math.abs(balanceSummary.gap)]);
+  }
   return rows;
 }
 
@@ -701,15 +1008,275 @@ async function loadExactLiasseTemplateWorkbook() {
   return XLSX.read(buffer, { type: "array", cellStyles: true, cellFormula: true });
 }
 
-function downloadGeneratedBfaLiasseFiscale() {
+async function loadExactForecastTemplateWorkbook() {
+  const response = await fetch(`${EXACT_FORECAST_TEMPLATE_PATH}?v=20260327`);
+  if (!response.ok) throw new Error(`Template ${EXACT_FORECAST_TEMPLATE_PATH} introuvable (${response.status})`);
+  const buffer = await response.arrayBuffer();
+  return XLSX.read(buffer, { type: "array", cellStyles: true, cellFormula: true });
+}
+
+function clampNumber(value, minValue, maxValue, fallbackValue = 0) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return fallbackValue;
+  return Math.min(maxValue, Math.max(minValue, num));
+}
+
+function roundPositiveAmount(value) {
+  const num = Number(value) || 0;
+  return num > 0 ? Math.round(num) : 0;
+}
+
+function spreadAnnualAmountOverMonths(total) {
+  const safeTotal = roundPositiveAmount(total);
+  const base = Math.floor(safeTotal / 12);
+  let remainder = safeTotal - (base * 12);
+  return Array.from({ length: 12 }, () => {
+    const amount = base + (remainder > 0 ? 1 : 0);
+    if (remainder > 0) remainder -= 1;
+    return amount;
+  });
+}
+
+function sumCurrentMovementsByPrefixes(bal, prefixes, normalSide) {
+  let total = 0;
+  Object.keys(bal).forEach((code) => {
+    if (!prefixes.some((prefix) => String(code).startsWith(String(prefix)))) return;
+    const row = bal[code] || {};
+    const mvtD = (row.debit || 0) - (row.n1d || 0);
+    const mvtC = (row.credit || 0) - (row.n1c || 0);
+    total += normalSide === "credit" ? (mvtC - mvtD) : (mvtD - mvtC);
+  });
+  return total > 0 ? total : 0;
+}
+
+function sumClosingNetByPrefixes(bal, prefixes) {
+  let total = 0;
+  Object.keys(bal).forEach((code) => {
+    if (!prefixes.some((prefix) => String(code).startsWith(String(prefix)))) return;
+    const row = bal[code] || {};
+    total += (row.debit || 0) - (row.credit || 0);
+  });
+  return total > 0 ? total : 0;
+}
+
+function getForecastLegalStatus(formeJuridique) {
+  const key = normalizeTemplateKey(formeJuridique);
+  if (!key) return "SARL (IS)";
+  if (key.includes("micro")) return "Micro-entreprise";
+  if (key.includes("entreprise individuelle") || key === "ei") return "Entreprise individuelle au r\u00e9el (IR)";
+  if (key.includes("eurl")) return "EURL (IS)";
+  if (key.includes("sasu")) return "SASU (IS)";
+  if (key.includes("sas") || key === "sa" || key.includes("societe anonyme")) return "SAS (IS)";
+  if (key.includes("sarl")) return "SARL (IS)";
+  return "SARL (IS)";
+}
+
+function getForecastSalesType(merchandiseRevenue, serviceRevenue, activityLabel) {
+  if (merchandiseRevenue > 0 && serviceRevenue > 0) return "Mixte";
+  if (serviceRevenue > 0) return "Services";
+  if (merchandiseRevenue > 0) return "Marchandises (y compris h\u00e9bergement et restauration)";
+
+  const activityKey = normalizeTemplateKey(activityLabel);
+  if (activityKey.includes("service") || activityKey.includes("consult") || activityKey.includes("prestation")) return "Services";
+  if (activityKey.includes("commerce") || activityKey.includes("vente") || activityKey.includes("boutique") || activityKey.includes("restaurant")) {
+    return "Marchandises (y compris h\u00e9bergement et restauration)";
+  }
+  return "Mixte";
+}
+
+function getForecastTemplateSnapshot() {
+  const bal = computeBalances();
+  const companyName = getCompanyDisplayName();
+  const durationMonths = getExerciseDurationMonths(currentCompanyDetails.exerciceDu || "", currentCompanyDetails.exerciceAu || "");
+  const annualizationFactor = durationMonths > 0 ? (12 / durationMonths) : 1;
+
+  const merchandiseRevenue = roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["701", "702", "703", "704"], "credit") * annualizationFactor);
+  const serviceRevenue = roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["706", "707"], "credit") * annualizationFactor);
+  const annualPurchases = roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["601", "602", "604", "605"], "debit") * annualizationFactor);
+  const employeeCompensation = roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["661", "662", "663"], "debit") * annualizationFactor);
+
+  const intangibleSetup = roundPositiveAmount(sumClosingNetByPrefixes(bal, ["21"]));
+  const realEstateSetup = roundPositiveAmount(sumClosingNetByPrefixes(bal, ["22", "231", "232"]));
+  const worksSetup = roundPositiveAmount(sumClosingNetByPrefixes(bal, ["233", "234", "235", "238"]));
+  const equipmentSetup = roundPositiveAmount(sumClosingNetByPrefixes(bal, ["241", "242", "243", "245", "246", "248"]));
+  const officeEquipmentSetup = roundPositiveAmount(sumClosingNetByPrefixes(bal, ["244"]));
+  const openingStock = roundPositiveAmount(sumClosingNetByPrefixes(bal, ["31", "32", "33", "35"]));
+  const startingCash = roundPositiveAmount(sumClosingNetByPrefixes(bal, ["50", "52", "53", "54", "57", "58"]));
+
+  const growthYear2 = (merchandiseRevenue + serviceRevenue) > 0 ? 0.1 : 0.15;
+  const growthYear3 = (merchandiseRevenue + serviceRevenue) > 0 ? 0.08 : 0.1;
+  const purchaseRatio = clampNumber(merchandiseRevenue > 0 ? (annualPurchases / merchandiseRevenue) : 0.5, 0, 0.95, 0.5);
+  const cityOrCommune = guessCityFromAddress(currentCompanyDetails.siegeSocial || "", currentCompanyDetails.pays || "") || currentCompanyDetails.siegeSocial || "";
+  const ownerName = companyName || "";
+  const projectName = [companyName, currentCompanyDetails.activitePrincipale].filter(Boolean).join(" - ") || companyName || "Projet OHADA Compta";
+  const legalStatus = getForecastLegalStatus(currentCompanyDetails.formeJuridique || "");
+  const salesType = getForecastSalesType(merchandiseRevenue, serviceRevenue, currentCompanyDetails.activitePrincipale || "");
+  const merchandiseMonthly = spreadAnnualAmountOverMonths(merchandiseRevenue);
+  const serviceMonthly = spreadAnnualAmountOverMonths(serviceRevenue);
+
+  const employeeYear1 = employeeCompensation;
+  const employeeYear2 = roundPositiveAmount(employeeYear1 * (1 + growthYear2));
+  const employeeYear3 = roundPositiveAmount(employeeYear2 * (1 + growthYear3));
+
+  return {
+    ownerName,
+    projectName,
+    legalStatus,
+    cityOrCommune,
+    salesType,
+    merchandiseRevenue,
+    serviceRevenue,
+    annualPurchases,
+    purchaseRatio,
+    intangibleSetup,
+    realEstateSetup,
+    worksSetup,
+    equipmentSetup,
+    officeEquipmentSetup,
+    openingStock,
+    startingCash,
+    growthYear2,
+    growthYear3,
+    employeeYear1,
+    employeeYear2,
+    employeeYear3,
+    managerYear1: 0,
+    managerYear2: 0,
+    managerYear3: 0,
+    merchandiseMonthly,
+    serviceMonthly,
+    amortizationYears: 5,
+    acreEligible: false,
+    assumptionsCount: [
+      currentCompanyDetails.raisonSociale,
+      currentCompanyDetails.formeJuridique,
+      currentCompanyDetails.tel,
+      currentCompanyDetails.emailCompta,
+      merchandiseRevenue + serviceRevenue > 0 ? "ca" : "",
+      startingCash > 0 ? "cash" : ""
+    ].filter(Boolean).length
+  };
+}
+
+function populateExactForecastTemplate(workbook) {
+  const acct = getCurrentAccountMeta();
+  const snapshot = getForecastTemplateSnapshot();
+  const inputSheet = workbook.Sheets[EXACT_FORECAST_INPUT_SHEET_NAME];
+  if (!inputSheet) throw new Error(`Feuille ${EXACT_FORECAST_INPUT_SHEET_NAME} introuvable dans le modele previsionnel.`);
+
+  setWorksheetText(inputSheet, "B6", snapshot.ownerName || (acct ? acct.company : ""));
+  setWorksheetText(inputSheet, "B7", snapshot.projectName);
+  setWorksheetText(inputSheet, "B8", snapshot.legalStatus);
+  setWorksheetText(inputSheet, "B9", currentCompanyDetails.tel || "");
+  setWorksheetText(inputSheet, "B10", currentCompanyDetails.emailCompta || (acct ? acct.email : ""));
+  setWorksheetText(inputSheet, "B11", snapshot.cityOrCommune);
+  setWorksheetText(inputSheet, "B13", snapshot.salesType);
+
+  setWorksheetNumber(inputSheet, "B19", snapshot.intangibleSetup);
+  setWorksheetNumber(inputSheet, "B28", snapshot.realEstateSetup);
+  setWorksheetNumber(inputSheet, "B29", snapshot.worksSetup);
+  setWorksheetNumber(inputSheet, "B30", snapshot.equipmentSetup);
+  setWorksheetNumber(inputSheet, "B31", snapshot.officeEquipmentSetup);
+  setWorksheetNumber(inputSheet, "B32", snapshot.openingStock);
+  setWorksheetNumber(inputSheet, "B33", snapshot.startingCash);
+  setWorksheetNumber(inputSheet, "C36", snapshot.amortizationYears);
+
+  snapshot.merchandiseMonthly.forEach((amount, index) => {
+    const row = 103 + index;
+    setWorksheetNumber(inputSheet, `B${row}`, amount > 0 ? 1 : 0);
+    setWorksheetNumber(inputSheet, `C${row}`, amount);
+  });
+
+  snapshot.serviceMonthly.forEach((amount, index) => {
+    const row = 103 + index;
+    setWorksheetNumber(inputSheet, `G${row}`, amount > 0 ? 1 : 0);
+    setWorksheetNumber(inputSheet, `H${row}`, amount);
+  });
+
+  setWorksheetNumber(inputSheet, "D117", snapshot.growthYear2);
+  setWorksheetNumber(inputSheet, "I117", snapshot.growthYear2);
+  setWorksheetNumber(inputSheet, "D118", snapshot.growthYear3);
+  setWorksheetNumber(inputSheet, "I118", snapshot.growthYear3);
+  setWorksheetNumber(inputSheet, "D123", snapshot.purchaseRatio);
+
+  setWorksheetNumber(inputSheet, "B133", snapshot.employeeYear1);
+  setWorksheetNumber(inputSheet, "C133", snapshot.employeeYear2);
+  setWorksheetNumber(inputSheet, "D133", snapshot.employeeYear3);
+  setWorksheetNumber(inputSheet, "B134", snapshot.managerYear1);
+  setWorksheetNumber(inputSheet, "C134", snapshot.managerYear2);
+  setWorksheetNumber(inputSheet, "D134", snapshot.managerYear3);
+  setWorksheetText(inputSheet, "C136", snapshot.acreEligible ? "Oui" : "Non");
+}
+
+function getMimeTypeForFilename(filename) {
+  const lower = String(filename || "").toLowerCase();
+  if (lower.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (lower.endsWith(".csv")) return "text/csv;charset=utf-8";
+  if (lower.endsWith(".json")) return "application/json;charset=utf-8";
+  return "application/octet-stream";
+}
+
+function downloadBlobFile(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function workbookToBlob(workbook, filename, bookType = "xlsx") {
+  const buffer = XLSX.write(workbook, { bookType, type: "array", compression: true });
+  return new Blob([buffer], { type: getMimeTypeForFilename(filename) });
+}
+
+async function tryShareBlobFile(blob, filename, title, text) {
+  if (typeof navigator === "undefined" || typeof navigator.share !== "function" || typeof File === "undefined") {
+    return { shared: false, unsupported: true };
+  }
+
+  const file = new File([blob], filename, {
+    type: blob.type || getMimeTypeForFilename(filename),
+    lastModified: Date.now()
+  });
+
+  if (typeof navigator.canShare === "function" && !navigator.canShare({ files: [file] })) {
+    return { shared: false, unsupported: true };
+  }
+
+  try {
+    await navigator.share({
+      title: title || filename,
+      text: text || `Fichier exporte depuis OHADA COMPTA: ${filename}`,
+      files: [file]
+    });
+    return { shared: true };
+  } catch (error) {
+    if (error && error.name === "AbortError") return { shared: false, cancelled: true };
+    console.warn("File share failed", error);
+    return { shared: false, error };
+  }
+}
+
+async function shareOrDownloadBlobFile(blob, filename, options = {}) {
+  const result = await tryShareBlobFile(blob, filename, options.title, options.text);
+  if (result.shared) {
+    showToast(`${filename} partage avec succes.`, "success");
+    return "shared";
+  }
+  if (result.cancelled) return "cancelled";
+  downloadBlobFile(blob, filename);
+  showToast(`Le partage direct n'est pas disponible ici. ${filename} a ete telecharge pour partage manuel.`, "info");
+  return "downloaded";
+}
+
+function buildGeneratedBfaLiasseWorkbook() {
   if (currentRef !== "syscohada") {
-    showToast("Le fichier BF[254] est reserve au referentiel SYSCOHADA. Basculez sur SYSCOHADA avant le telechargement.", "error");
-    return;
+    throw new Error("Le fichier BF[254] est reserve au referentiel SYSCOHADA. Basculez sur SYSCOHADA avant l'export.");
   }
 
   if (typeof XLSX === "undefined") {
-    showToast("Librairie Excel non chargee. Verifiez votre connexion.", "error");
-    return;
+    throw new Error("Librairie Excel non chargee. Verifiez votre connexion.");
   }
 
   const acct = getCurrentAccountMeta();
@@ -788,31 +1355,154 @@ function downloadGeneratedBfaLiasseFiscale() {
     ["Note 14", "Informations fiscales (DSF)"],
   ], [12, 48], 2);
 
-  XLSX.writeFile(workbook, BF_LIASSE_DOWNLOAD_NAME, { compression: true });
-  showToast(`Classeur ${BF_LIASSE_DOWNLOAD_NAME} genere avec succes.`, "success");
+  return workbook;
 }
 
-async function downloadBfaLiasseFiscale() {
+function downloadGeneratedBfaLiasseFiscale() {
+  try {
+    const workbook = buildGeneratedBfaLiasseWorkbook();
+    XLSX.writeFile(workbook, BF_LIASSE_DOWNLOAD_NAME, { compression: true });
+    showToast(`Classeur ${BF_LIASSE_DOWNLOAD_NAME} genere avec succes.`, "success");
+  } catch (error) {
+    showToast(error.message || "Impossible de generer la liasse interne.", "error");
+  }
+}
+
+async function shareGeneratedBfaLiasseFiscale() {
+  try {
+    const workbook = buildGeneratedBfaLiasseWorkbook();
+    const blob = workbookToBlob(workbook, BF_LIASSE_DOWNLOAD_NAME);
+    await shareOrDownloadBlobFile(blob, BF_LIASSE_DOWNLOAD_NAME, {
+      title: BF_LIASSE_PACKET_NAME,
+      text: `Liasse fiscale exportee depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
+    });
+  } catch (error) {
+    showToast(error.message || "Impossible de partager la liasse interne.", "error");
+  }
+}
+
+async function buildExactLiasseWorkbook() {
   if (currentRef !== "syscohada") {
-    showToast("Le fichier LIASSE.xlsx est reserve au referentiel SYSCOHADA. Basculez sur SYSCOHADA avant le telechargement.", "error");
-    return;
+    throw new Error("Le fichier LIASSE.xlsx est reserve au referentiel SYSCOHADA. Basculez sur SYSCOHADA avant l'export.");
   }
 
   if (typeof XLSX === "undefined") {
-    showToast("Librairie Excel non chargee. Verifiez votre connexion.", "error");
-    return;
+    throw new Error("Librairie Excel non chargee. Verifiez votre connexion.");
   }
 
+  const workbook = await loadExactLiasseTemplateWorkbook();
+  populateExactLiasseTemplate(workbook);
+  return workbook;
+}
+
+async function downloadExactLiasseFiscale() {
+  const workbook = await buildExactLiasseWorkbook();
+  XLSX.writeFile(workbook, EXACT_LIASSE_DOWNLOAD_NAME, { bookType: "xlsx", compression: true });
+  showToast(`Le modele exact ${EXACT_LIASSE_DOWNLOAD_NAME} a ete rempli avec succes.`, "success");
+}
+
+async function shareExactLiasseFiscale() {
+  const workbook = await buildExactLiasseWorkbook();
+  const blob = workbookToBlob(workbook, EXACT_LIASSE_DOWNLOAD_NAME);
+  await shareOrDownloadBlobFile(blob, EXACT_LIASSE_DOWNLOAD_NAME, {
+    title: EXACT_LIASSE_DOWNLOAD_NAME,
+    text: `LIASSE.xlsx preparee depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
+  });
+}
+
+async function downloadBfaLiasseFiscale() {
   try {
-    const workbook = await loadExactLiasseTemplateWorkbook();
-    populateExactLiasseTemplate(workbook);
-    XLSX.writeFile(workbook, EXACT_LIASSE_DOWNLOAD_NAME, { bookType: "xlsx", compression: true });
-    showToast(`Le modele exact ${EXACT_LIASSE_DOWNLOAD_NAME} a ete rempli avec succes.`, "success");
+    await downloadExactLiasseFiscale();
   } catch (error) {
     console.warn("Exact template export failed", error);
     showToast("Modele LIASSE.xlsx indisponible. Generation du classeur interne en secours.", "info");
     downloadGeneratedBfaLiasseFiscale();
   }
+}
+
+async function shareBfaLiasseFiscale() {
+  try {
+    await shareExactLiasseFiscale();
+  } catch (error) {
+    console.warn("Exact template share failed", error);
+    showToast("Modele LIASSE.xlsx indisponible. Partage du classeur interne en secours.", "info");
+    await shareGeneratedBfaLiasseFiscale();
+  }
+}
+
+async function buildExactForecastWorkbook() {
+  if (typeof XLSX === "undefined") {
+    throw new Error("Librairie Excel non chargee. Verifiez votre connexion.");
+  }
+
+  const workbook = await loadExactForecastTemplateWorkbook();
+  populateExactForecastTemplate(workbook);
+  return workbook;
+}
+
+async function downloadForecastWorkbook() {
+  try {
+    const workbook = await buildExactForecastWorkbook();
+    XLSX.writeFile(workbook, EXACT_FORECAST_DOWNLOAD_NAME, { bookType: "xlsx", compression: true });
+    showToast(`Le modele ${EXACT_FORECAST_DOWNLOAD_NAME} a ete genere avec succes.`, "success");
+  } catch (error) {
+    showToast(error.message || "Impossible de generer le plan financier previsionnel.", "error");
+  }
+}
+
+async function shareForecastWorkbook() {
+  try {
+    const workbook = await buildExactForecastWorkbook();
+    const blob = workbookToBlob(workbook, EXACT_FORECAST_DOWNLOAD_NAME);
+    await shareOrDownloadBlobFile(blob, EXACT_FORECAST_DOWNLOAD_NAME, {
+      title: "Plan financier previsionnel",
+      text: `Plan financier previsionnel exporte depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
+    });
+  } catch (error) {
+    showToast(error.message || "Impossible de partager le plan financier previsionnel.", "error");
+  }
+}
+
+function buildBalanceTemplateBlob() {
+  const plan = getPlan();
+  let csv = "Compte,Libelle,S.O. Debit,S.O. Credit\n";
+  plan.forEach(a => {
+    const ob = OPENING_BALANCES[a.numero] || { n1d: 0, n1c: 0 };
+    csv += `"${a.numero}","${a.libelle}",${ob.n1d},${ob.n1c}\n`;
+  });
+  return new Blob([csv], { type: getMimeTypeForFilename("balance_ouverture_template.csv") });
+}
+
+async function shareBalanceTemplate() {
+  const blob = buildBalanceTemplateBlob();
+  await shareOrDownloadBlobFile(blob, "balance_ouverture_template.csv", {
+    title: "Modele de balance d'ouverture",
+    text: `Modele CSV de balance d'ouverture exporte depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
+  });
+}
+
+function buildAmortCsvBlob() {
+  const bal = computeBalances();
+  const plan = getPlan();
+  const durees = {"21":5,"211":5,"212":5,"213":10,"214":10,"22":0,"23":20,"231":20,"232":20,"234":10,"235":7,"24":5,"241":5,"242":5,"244":3,"245":5,"246":7,"248":5};
+  function ac(c){if(c.startsWith("21"))return"281";if(c.startsWith("22"))return"282";if(c.startsWith("23"))return"283";return"284";}
+  let csv = "Compte,Libelle,VBO,Duree,Taux%,Cumul N-1,Dotation N,Cumul N,VNC\n";
+  plan.filter(a=>a.classe===2&&a.sens==="Debit"&&bal[a.numero]).forEach(a=>{
+    const vbo=bal[a.numero].debit; if(!vbo) return;
+    const cn1=bal[ac(a.numero)]?(bal[ac(a.numero)].n1c||0):0;
+    const d=durees[a.numero]||5;
+    const dot=d>0?Math.round(vbo/d):0;
+    csv += `"${a.numero}","${a.libelle}",${vbo},${d},${d>0?Math.round(10000/d)/100:0},${cn1},${dot},${cn1+dot},${Math.max(0,vbo-cn1-dot)}\n`;
+  });
+  return new Blob([csv], { type: getMimeTypeForFilename("amortissements.csv") });
+}
+
+async function shareAmortCsv() {
+  const blob = buildAmortCsvBlob();
+  await shareOrDownloadBlobFile(blob, "amortissements.csv", {
+    title: "Tableau des amortissements",
+    text: `Export CSV des amortissements genere depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -833,8 +1523,10 @@ function render() {
     case "annexes": main.innerHTML = renderAnnexes(); break;
     case "saisie": main.innerHTML = renderSaisie(); break;
     case "cloture": main.innerHTML = renderCloture(); break;
+    case "previsionnel": main.innerHTML = renderPrevisionnel(); break;
     case "dsf": main.innerHTML = renderDSF(); break;
     case "guide": main.innerHTML = renderGuide(); break;
+    case "veille": main.innerHTML = renderVeilleOhada(); break;
     case "comparaison": main.innerHTML = renderComparaison(); break;
     case "parametres": main.innerHTML = renderParametres(); break;
     default: main.innerHTML = renderDashboard();
@@ -849,8 +1541,9 @@ function render() {
 function renderDashboard() {
   const plan = getPlan();
   const bal = computeBalances();
-  const totalDebit = journalEntries.reduce((s, e) => s + e.debit, 0);
-  const totalCredit = journalEntries.reduce((s, e) => s + e.credit, 0);
+  const balanceSummary = getComputedBalanceSummary(bal);
+  const totalDebit = balanceSummary.totalDebit;
+  const totalCredit = balanceSummary.totalCredit;
   const refLabel = currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise";
 
   // Company info
@@ -926,7 +1619,7 @@ function renderDashboard() {
       <div class="kpi"><div class="kpi-label">Ecritures</div><div class="kpi-value">${journalEntries.length}</div><div class="kpi-note">Journal general</div></div>
       <div class="kpi"><div class="kpi-label">Total debit</div><div class="kpi-value" style="color:var(--green);font-size:1.1rem;">${fmt(totalDebit)}</div><div class="kpi-note">XOF</div></div>
       <div class="kpi"><div class="kpi-label">Total credit</div><div class="kpi-value" style="color:var(--red);font-size:1.1rem;">${fmt(totalCredit)}</div><div class="kpi-note">XOF</div></div>
-      <div class="kpi"><div class="kpi-label">Equilibre</div><div class="kpi-value" style="color:${totalDebit === totalCredit ? 'var(--green)' : 'var(--red)'};">${totalDebit === totalCredit ? 'OK' : 'ERREUR'}</div><div class="kpi-note">${totalDebit === totalCredit ? 'Debit = Credit' : 'Ecart: ' + fmt(Math.abs(totalDebit - totalCredit))}</div></div>
+      <div class="kpi"><div class="kpi-label">Equilibre</div><div class="kpi-value" style="color:${balanceSummary.isBalanced ? 'var(--green)' : 'var(--red)'};">${balanceSummary.isBalanced ? 'OK' : 'ERREUR'}</div><div class="kpi-note">${balanceSummary.isBalanced ? 'Bilan pret a etre equilibre' : 'Ecart cumule: ' + fmt(Math.abs(balanceSummary.gap))}</div></div>
       <div class="kpi"><div class="kpi-label">Etats OHADA</div><div class="kpi-value">17</div><div class="kpi-note">Pays membres</div></div>
     </div>
 
@@ -977,6 +1670,9 @@ function renderDashboard() {
         }<br><br>
         <strong>Etats financiers:</strong> Bilan | Compte de resultat | Tableau de flux de tresorerie (TFT) | Notes annexes<br>
         <strong>Pays membres:</strong> ${OHADA_MEMBER_STATES.join(", ")}
+        <div style="margin-top:14px;">
+          <button class="btn btn-outline" onclick="navigateToTab('veille')">Ouvrir la veille OHADA quotidienne</button>
+        </div>
       </div>
     </div>
   `;
@@ -1045,7 +1741,7 @@ function renderJournal() {
       <div class="card-header">
         <div>
           <div class="card-title">Journal general</div>
-          <div class="card-subtitle">${journalEntries.length} ecritures | Equilibre: ${totalD === totalC ? 'OK' : 'ERREUR'}</div>
+          <div class="card-subtitle">${journalEntries.length} ecritures | Equilibre: ${isBalancedAmount(totalD, totalC) ? 'OK' : 'ERREUR'}</div>
         </div>
         <button class="btn btn-gold" onclick="navigateToTab('saisie')">+ Nouvelle ecriture</button>
       </div>
@@ -1174,12 +1870,13 @@ function renderBalance() {
       <div class="card-header">
         <div>
           <div class="card-title">Balance generale — ${currentRef==="sycebnl"?"SYCEBNL":"SYSCOHADA Revise"}</div>
-          <div class="card-subtitle">${comptes.length} comptes | S.O.: ${totN1D===totN1C?'OK':'ERR'} | Mvt: ${totMvtD===totMvtC?'OK':'ERREUR'}</div>
+          <div class="card-subtitle">${comptes.length} comptes | S.O.: ${isBalancedAmount(totN1D, totN1C)?'OK':'ERR'} | Mvt: ${isBalancedAmount(totMvtD, totMvtC)?'OK':'ERREUR'} | Solde: ${isBalancedAmount(totSD, totSC)?'OK':'ERREUR'}</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <label class="btn btn-outline" style="cursor:pointer;font-size:0.78rem;">
             Importer CSV <input type="file" accept=".csv" style="display:none;" onchange="importBalanceCsv(this)">
           </label>
+          <button class="btn btn-outline" style="font-size:0.78rem;" onclick="shareBalanceTemplate()">Partager modele CSV</button>
           <button class="btn btn-outline" style="font-size:0.78rem;" onclick="downloadBalanceTemplate()">Modele CSV</button>
         </div>
       </div>
@@ -1239,75 +1936,33 @@ function importBalanceCsv(input) {
 }
 
 function downloadBalanceTemplate() {
-  const plan = getPlan();
-  let csv = 'Compte,Libelle,S.O. Debit,S.O. Credit\n';
-  plan.forEach(a => {
-    const ob = OPENING_BALANCES[a.numero]||{n1d:0,n1c:0};
-    csv += '"' + a.numero + '","' + a.libelle + '",' + ob.n1d + ',' + ob.n1c + '\n';
-  });
-  const blob = new Blob([csv], {type:'text/csv'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'balance_ouverture_template.csv'; a.click();
-  URL.revokeObjectURL(url);
+  const blob = buildBalanceTemplateBlob();
+  downloadBlobFile(blob, "balance_ouverture_template.csv");
+  showToast("Le modele balance_ouverture_template.csv a ete genere avec succes.", "success");
 }
 
 // ═══════════════════════════════════════════════════════════
 // BILAN
 // ═══════════════════════════════════════════════════════════
 function renderBilan() {
-  const bal = computeBalances();
+  const { bal, actifRows, passifRows, resultatExercice, totalActif, totalPassif, balanceSummary, isBalanced } = getBilanSnapshot();
   const hasBalances = Object.keys(bal).length > 0;
-
-  // sum debit-credit for a list of account prefixes (net value)
-  function sumByPrefix(prefixes) {
-    let total = 0;
-    Object.keys(bal).forEach(code => {
-      if (prefixes.some(p => code.startsWith(String(p)))) {
-        total += bal[code].debit - bal[code].credit;
-      }
-    });
-    return total;
-  }
-
-  // Actif: net value = accounts + amortissements/depreciations (debit-credit auto-nets)
-  const actifRows = BILAN_STRUCTURE.actif.map(s => ({
-    section: s.section,
-    total: sumByPrefix([...s.accounts, ...(s.amort||[])])
-  }));
-
-  // Passif: negate (credit-normal accounts)
-  const passifRows = BILAN_STRUCTURE.passif.map(s => ({
-    section: s.section,
-    total: -sumByPrefix(s.accounts)
-  }));
-
-  // Compute exercise result from gestion account MOVEMENTS (not opening balances)
-  let produits = 0, charges = 0;
-  Object.keys(bal).forEach(code => {
-    const mvtD = (bal[code].debit||0) - (bal[code].n1d||0);
-    const mvtC = (bal[code].credit||0) - (bal[code].n1c||0);
-    const c = parseInt(code[0]);
-    if (c === 7 || code.startsWith('82') || code.startsWith('84')) produits += mvtC - mvtD;
-    if (c === 6 || code.startsWith('81') || code.startsWith('83') ||
-        code.startsWith('85') || code.startsWith('87') || code.startsWith('89')) charges += mvtD - mvtC;
-  });
-  const resultatExercice = produits - charges;
-
-  // Add result to CAPITAUX PROPRES (first passif row)
-  if (passifRows.length > 0) passifRows[0].total += resultatExercice;
-
-  const totalActif = actifRows.reduce((s, r) => s + r.total, 0);
-  const totalPassif = passifRows.reduce((s, r) => s + r.total, 0);
-  const isBalanced = Math.abs(totalActif - totalPassif) < 1;
+  const bilanGap = Math.abs(totalActif - totalPassif);
+  const sourceGap = Math.abs(balanceSummary.gap);
+  const equilibriumLabel = isBalanced
+    ? "OK ✓"
+    : balanceSummary.isBalanced
+      ? "ERREUR — ecart " + fmt(bilanGap)
+      : "ERREUR — balance generale desequilibree de " + fmt(sourceGap);
 
   return `
     <div class="card">
       <div class="card-header">
         <div class="card-title">Bilan — ${currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise"}</div>
-        <div class="card-subtitle" style="color:${isBalanced?'var(--green)':'var(--red)'};">Equilibre: ${isBalanced?'OK ✓':'ERREUR — ecart '+fmt(Math.abs(totalActif-totalPassif))}</div>
+        <div class="card-subtitle" style="color:${isBalanced?'var(--green)':'var(--red)'};">Equilibre: ${equilibriumLabel}</div>
       </div>
       ${!hasBalances ? `<div class="info-box" style="margin-bottom:16px;">Aucune donnee comptable n'est encore disponible. Le bilan s'affichera automatiquement apres import des soldes d'ouverture ou saisie des ecritures.</div>` : ''}
+      ${hasBalances && !balanceSummary.isBalanced ? `<div class="info-box" style="margin-bottom:16px;border-color:rgba(227,98,98,0.35);color:var(--red);">La balance generale n'est pas equilibree. Verifiez les soldes d'ouverture ou les imports d'ecritures avant de valider la liasse.</div>` : ''}
       <div class="grid-2">
         <div>
           <div class="section-title">ACTIF (valeurs nettes)</div>
@@ -1584,7 +2239,10 @@ function renderAmortissements() {
           <div class="card-title">Tableau des amortissements des immobilisations</div>
           <div class="card-subtitle">${rows.length} immobilisations</div>
         </div>
-        <button class="btn btn-outline" style="font-size:0.78rem;" onclick="exportAmortCsv()">Export CSV</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-outline" style="font-size:0.78rem;" onclick="shareAmortCsv()">Partager CSV</button>
+          <button class="btn btn-outline" style="font-size:0.78rem;" onclick="exportAmortCsv()">Export CSV</button>
+        </div>
       </div>
       ${rows.length===0?'<div class="info-box">Aucune immobilisation mouvementee dans le journal. Saisissez des ecritures sur les comptes de classe 2.</div>':''}
       ${rows.length>0?`
@@ -1628,22 +2286,9 @@ function renderAmortissements() {
 }
 
 function exportAmortCsv() {
-  const bal = computeBalances();
-  const plan = getPlan();
-  const durees={"21":5,"211":5,"212":5,"213":10,"214":10,"22":0,"23":20,"231":20,"232":20,"234":10,"235":7,"24":5,"241":5,"242":5,"244":3,"245":5,"246":7,"248":5};
-  function ac(c){if(c.startsWith("21"))return"281";if(c.startsWith("22"))return"282";if(c.startsWith("23"))return"283";return"284";}
-  let csv='Compte,Libelle,VBO,Duree,Taux%,Cumul N-1,Dotation N,Cumul N,VNC\n';
-  plan.filter(a=>a.classe===2&&a.sens==="Debit"&&bal[a.numero]).forEach(a=>{
-    const vbo=bal[a.numero].debit; if(!vbo) return;
-    const cn1=bal[ac(a.numero)]?(bal[ac(a.numero)].n1c||0):0;
-    const d=durees[a.numero]||5;
-    const dot=d>0?Math.round(vbo/d):0;
-    csv+='"'+a.numero+'","'+a.libelle+'",'+vbo+','+d+','+(d>0?Math.round(10000/d)/100:0)+','+cn1+','+dot+','+(cn1+dot)+','+Math.max(0,vbo-cn1-dot)+'\n';
-  });
-  const blob=new Blob([csv],{type:'text/csv'});
-  const url=URL.createObjectURL(blob);
-  const el=document.createElement('a');el.href=url;el.download='amortissements.csv';el.click();
-  URL.revokeObjectURL(url);
+  const blob = buildAmortCsvBlob();
+  downloadBlobFile(blob, "amortissements.csv");
+  showToast("Le fichier amortissements.csv a ete genere avec succes.", "success");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1719,10 +2364,49 @@ function renderSaisie() {
 // CLOTURE
 // ═══════════════════════════════════════════════════════════
 function renderCloture() {
+  const snapshot = getClotureSnapshot();
+  const history = Array.isArray(currentCompanyDetails.closureHistory) ? currentCompanyDetails.closureHistory : [];
+  const statusRows = [
+    {
+      label: "Fiche entreprise",
+      ok: snapshot.profileComplete,
+      detail: snapshot.profileComplete ? "Informations minimales renseignees." : "Completez la raison sociale, le NIF, le pays et les dates d'exercice."
+    },
+    {
+      label: "Periode d'exercice",
+      ok: snapshot.validDates,
+      detail: snapshot.validDates
+        ? `${formatDateValue(snapshot.exerciceDu)} au ${formatDateValue(snapshot.exerciceAu)}`
+        : "Dates d'exercice invalides ou absentes."
+    },
+    {
+      label: "Balance generale",
+      ok: snapshot.balanceSummary.isBalanced,
+      detail: snapshot.balanceSummary.isBalanced
+        ? `Debit = Credit (${fmt(snapshot.balanceSummary.totalDebit)} XOF)`
+        : `Ecart cumule: ${fmt(Math.abs(snapshot.balanceSummary.gap))} XOF`
+    },
+    {
+      label: "A-nouveaux de l'exercice suivant",
+      ok: snapshot.carryforwardSummary.isBalanced,
+      detail: `${snapshot.carryforwardSummary.count} comptes reportes | Resultat: ${snapshot.resultatExercice >= 0 ? "benefice" : "perte"} ${fmt(Math.abs(snapshot.resultatExercice))} XOF`
+    }
+  ];
+
   return `
     <div class="card">
-      <div class="card-header"><div class="card-title">Cloture de l'exercice</div></div>
-      <div class="info-box">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Cloture de l'exercice</div>
+          <div class="card-subtitle">${snapshot.exerciceDu && snapshot.exerciceAu ? `Exercice courant: ${formatDateValue(snapshot.exerciceDu)} au ${formatDateValue(snapshot.exerciceAu)}` : "Periode d'exercice a definir dans les parametres."}</div>
+        </div>
+        <button
+          class="btn btn-gold"
+          onclick="cloturerExercice()"
+          ${snapshot.canClose ? "" : "disabled"}
+          style="${snapshot.canClose ? "" : "opacity:0.6;cursor:not-allowed;"}">Cloturer l'exercice</button>
+      </div>
+      <div class="info-box" style="margin-bottom:16px;">
         La cloture de l'exercice comptable OHADA comprend les etapes suivantes:<br><br>
         1. <strong>Inventaire physique</strong> — Verification des stocks, immobilisations, tresorerie<br>
         2. <strong>Ecritures de regularisation</strong> — Amortissements, provisions, charges constatees d'avance<br>
@@ -1732,6 +2416,41 @@ function renderCloture() {
         6. <strong>Ecritures de cloture</strong> — A-nouveaux pour l'exercice suivant<br>
         7. <strong>Declaration DSF/DGI</strong> — Liasse fiscale obligatoire
       </div>
+      <div class="stack">
+        ${statusRows.map((row) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);gap:12px;">
+            <div>
+              <div style="font-weight:700;color:${row.ok ? "var(--green)" : "var(--orange)"};">${row.label}</div>
+              <div style="font-size:0.8rem;color:var(--muted);margin-top:4px;">${row.detail}</div>
+            </div>
+            <div style="font-size:0.76rem;font-weight:700;color:${row.ok ? "var(--green)" : "var(--orange)"};">${row.ok ? "PRET" : "A VERIFIER"}</div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="grid-2" style="margin-top:16px;">
+        <div class="card" style="background:var(--surface2);">
+          <div class="section-title">Impact de la cloture</div>
+          <div style="font-size:0.86rem;color:var(--muted);line-height:1.7;">
+            Les comptes des classes 1 a 5 seront reportes en a-nouveaux.<br>
+            Les ecritures du journal courant seront archivees en historique de cloture puis remises a zero.<br>
+            Le resultat de l'exercice sera reporte en <strong>${snapshot.resultatExercice >= 0 ? "121 - Report a nouveau crediteur" : "129 - Report a nouveau debiteur"}</strong>.<br>
+            ${snapshot.nextExerciceDu && snapshot.nextExerciceAu ? `Le prochain exercice sera positionne du <strong>${formatDateValue(snapshot.nextExerciceDu)}</strong> au <strong>${formatDateValue(snapshot.nextExerciceAu)}</strong>.` : "Le prochain exercice ne peut pas encore etre calcule sans dates valides."}
+          </div>
+        </div>
+        <div class="card" style="background:var(--surface2);">
+          <div class="section-title">Historique recent</div>
+          ${history.length === 0 ? `<div style="font-size:0.84rem;color:var(--muted);">Aucune cloture n'a encore ete enregistree.</div>` : `
+            <div class="stack">
+              ${history.slice(0, 3).map((item) => `
+                <div style="padding:10px 12px;border:1px solid rgba(30,58,95,0.45);border-radius:var(--radius);">
+                  <div style="font-weight:700;color:var(--gold);">${item.exerciseLabel || "Exercice cloture"}</div>
+                  <div style="font-size:0.8rem;color:var(--muted);margin-top:4px;">Cloture le ${formatDateTimeValue(item.closedAt)} | Resultat ${fmt(Math.abs(item.resultatExercice || 0))} XOF ${item.resultatExercice >= 0 ? "benefice" : "perte"}</div>
+                </div>
+              `).join("")}
+            </div>
+          `}
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1739,6 +2458,66 @@ function renderCloture() {
 // ═══════════════════════════════════════════════════════════
 // DSF / DGI
 // ═══════════════════════════════════════════════════════════
+function renderPrevisionnel() {
+  const snapshot = getForecastTemplateSnapshot();
+  const projectName = snapshot.projectName || "Projet OHADA Compta";
+  const totals = [
+    { label: "CA marchandises annualise", value: snapshot.merchandiseRevenue },
+    { label: "CA services annualise", value: snapshot.serviceRevenue },
+    { label: "Tresorerie de depart", value: snapshot.startingCash },
+    { label: "Stock de depart", value: snapshot.openingStock },
+    { label: "Investissements de depart", value: snapshot.intangibleSetup + snapshot.realEstateSetup + snapshot.worksSetup + snapshot.equipmentSetup + snapshot.officeEquipmentSetup },
+    { label: "Salaires employes annee 1", value: snapshot.employeeYear1 }
+  ];
+
+  return `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Plan financier previsionnel</div>
+          <div class="card-subtitle">Remplissage du modele exact ${EXACT_FORECAST_DOWNLOAD_NAME} a partir des donnees d'OHADA Compta.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-outline" onclick="shareForecastWorkbook()">Partager le modele</button>
+          <button class="btn btn-gold" onclick="downloadForecastWorkbook()">Telecharger le modele rempli</button>
+        </div>
+      </div>
+      <div class="info-box" style="margin-bottom:16px;">
+        <strong>Modele cible:</strong> ${EXACT_FORECAST_DOWNLOAD_NAME}<br><br>
+        OHADA Compta pre-remplit l'identite du projet, le statut juridique, les contacts, quelques besoins de demarrage, le chiffre d'affaires annualise, un ratio d'achats, les salaires employes et les hypotheses de croissance. Le classeur reste entierement modifiable dans Excel apres export.
+      </div>
+      <div class="grid-3">
+        ${totals.map((item) => `
+          <div class="kpi">
+            <div class="kpi-label">${item.label}</div>
+            <div class="kpi-value" style="font-size:1rem;">${fmt(item.value)}</div>
+            <div class="kpi-note">XOF</div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="grid-2" style="margin-top:16px;">
+        <div class="card" style="background:var(--surface2);">
+          <div class="section-title">Hypotheses injectees</div>
+          <div style="font-size:0.85rem;color:var(--muted);line-height:1.8;">
+            Projet: <strong>${projectName}</strong><br>
+            Statut juridique: <strong>${snapshot.legalStatus}</strong><br>
+            Activite retenue: <strong>${snapshot.salesType}</strong><br>
+            Croissance annee 2: <strong>${(snapshot.growthYear2 * 100).toFixed(0)}%</strong><br>
+            Croissance annee 3: <strong>${(snapshot.growthYear3 * 100).toFixed(0)}%</strong><br>
+            Cout d'achat des marchandises: <strong>${(snapshot.purchaseRatio * 100).toFixed(0)}%</strong>
+          </div>
+        </div>
+        <div class="card" style="background:var(--surface2);">
+          <div class="section-title">Points a revoir dans Excel</div>
+          <div style="font-size:0.85rem;color:var(--muted);line-height:1.8;">
+            Verifiez les investissements de demarrage ligne par ligne, les hypotheses mensuelles de vente, la remuneration du dirigeant, l'ACRE et les delais clients/fournisseurs. Les formes juridiques OHADA qui n'existent pas dans ce modele sont rapprochees du statut le plus proche. Ce modele est pre-rempli automatiquement, mais il doit rester un document de travail ajuste par l'entreprise.
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderDSF() {
   const packetName = getDsfPacketName();
   const statuses = getDsfStatusRows();
@@ -1757,7 +2536,10 @@ function renderDSF() {
           <div class="card-title">Declaration Statistique et Fiscale (DSF)</div>
           <div class="card-subtitle">Remplissage du modele exact LIASSE.xlsx a partir des donnees de l'application.</div>
         </div>
-        <button class="btn btn-gold" onclick="downloadBfaLiasseFiscale()">Telecharger LIASSE.xlsx rempli</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-outline" onclick="shareBfaLiasseFiscale()">Partager LIASSE.xlsx</button>
+          <button class="btn btn-gold" onclick="downloadBfaLiasseFiscale()">Telecharger LIASSE.xlsx rempli</button>
+        </div>
       </div>
       <div class="info-box" style="margin-bottom:16px;">
         <strong>Packet cible:</strong> ${packetName}<br><br>
@@ -1780,6 +2562,64 @@ function renderDSF() {
 }
 
 // ═══════════════════════════════════════════════════════════
+// GUIDE OHADA
+// ═══════════════════════════════════════════════════════════
+function renderVeilleOhada() {
+  startOhadaWatchTicker();
+  const state = ensureOhadaWatchDailyRefresh(false);
+  const lastRefreshDate = state.lastRefreshAt ? new Date(state.lastRefreshAt) : null;
+  const hasValidRefreshDate = !!(lastRefreshDate && !Number.isNaN(lastRefreshDate.getTime()));
+  const lastRefreshText = hasValidRefreshDate ? formatDateTimeValue(state.lastRefreshAt) : "Jamais";
+  const nextRefreshText = hasValidRefreshDate
+    ? formatDateTimeValue(new Date(lastRefreshDate.getTime() + 24 * 60 * 60 * 1000).toISOString())
+    : "Au prochain affichage";
+
+  return `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Veille OHADA quotidienne</div>
+          <div class="card-subtitle">Recharge automatique une fois par jour du site officiel OHADA.com pendant la consultation.</div>
+        </div>
+      </div>
+      <div class="watch-meta-grid">
+        <div class="watch-meta-card">
+          <div class="watch-meta-label">Source</div>
+          <div class="watch-meta-value">OHADA.com</div>
+          <div class="watch-meta-note">Affichage en direct du site officiel ${OHADA_SITE_HOME_URL}</div>
+        </div>
+        <div class="watch-meta-card">
+          <div class="watch-meta-label">Derniere recharge</div>
+          <div class="watch-meta-value">${lastRefreshText}</div>
+          <div class="watch-meta-note">L'iframe est regeneree avec un cache-buster journalier.</div>
+        </div>
+        <div class="watch-meta-card">
+          <div class="watch-meta-label">Prochaine recharge</div>
+          <div class="watch-meta-value">${nextRefreshText}</div>
+          <div class="watch-meta-note">Si cette page reste ouverte, OHADA Compta verifiera automatiquement le changement de jour.</div>
+        </div>
+      </div>
+      <div class="info-box" style="margin-bottom:16px;">
+        <strong>Mode de mise a jour active</strong><br><br>
+        Cette veille recharge le site officiel OHADA.com une fois par jour pendant l'affichage. Sur GitHub Pages, le navigateur ne permet pas de lire automatiquement le contenu editorial de ce site en arriere-plan a cause des restrictions CORS, mais l'affichage direct du site officiel reste possible et est maintenant integre dans OHADA Compta.
+      </div>
+      <div class="watch-toolbar">
+        <button class="btn btn-gold" onclick="refreshOhadaWatch()">Actualiser maintenant</button>
+        <button class="btn btn-outline" onclick="openOhadaWebsite()">Ouvrir OHADA.com</button>
+        <button class="btn btn-outline" onclick="openOhadaWebsite('https://www.ohada.com/actualite.html')">Ouvrir les actualites</button>
+      </div>
+      <div class="watch-frame-shell">
+        <iframe
+          class="watch-frame"
+          src="${state.frameUrl}"
+          title="Veille quotidienne OHADA.com"
+          loading="lazy"
+          referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      </div>
+    </div>
+  `;
+}
+
 // GUIDE OHADA
 // ═══════════════════════════════════════════════════════════
 function renderGuide() {
@@ -1885,7 +2725,7 @@ function attachEvents() {
       });
       const msg = document.getElementById("saisie-msg");
       if (lignes.length < 2) { msg.innerHTML = '<span style="color:var(--red);">Minimum 2 lignes requises.</span>'; return; }
-      if (totalD !== totalC) { msg.innerHTML = `<span style="color:var(--red);">Desequilibre: Debit ${fmt(totalD)} != Credit ${fmt(totalC)}</span>`; return; }
+      if (!isBalancedAmount(totalD, totalC)) { msg.innerHTML = `<span style="color:var(--red);">Desequilibre: Debit ${fmt(totalD)} != Credit ${fmt(totalC)}</span>`; return; }
       if (!libelle) { msg.innerHTML = '<span style="color:var(--red);">Libelle requis.</span>'; return; }
 
       const piece = journal + "-" + String(journalEntries.length + 1).padStart(3, "0");
@@ -1951,10 +2791,13 @@ function handleDroppedFile(file) {
   if (name.endsWith('.csv') || name.endsWith('.txt')) {
     const reader = new FileReader();
     reader.onload = (e) => {
-      const count = parseBalanceCsv(e.target.result);
-      if (count > 0) {
-        showToast(count + ' comptes importes depuis ' + file.name, 'success');
+      const result = parseBalanceCsv(e.target.result);
+      if (result.count > 0 && result.isBalanced) {
+        replaceOpeningBalances(result.balances);
+        showToast(result.count + ' comptes importes depuis ' + file.name + ' - balance d\'ouverture equilibree.', 'success');
         render();
+      } else if (result.count > 0) {
+        showToast('Import refuse: la balance d\'ouverture n\'est pas equilibree (ecart ' + fmt(Math.abs(result.gap)) + ').', 'error');
       } else {
         showToast('Aucun compte detecte. Verifiez le format CSV.', 'error');
       }
@@ -1971,6 +2814,7 @@ function handleDroppedFile(file) {
       try {
         const wb = XLSX.read(e.target.result, { type: 'binary' });
         // Try to find a balance sheet (first sheet with account data)
+        const importedBalances = {};
         let count = 0;
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -1988,13 +2832,17 @@ function handleDroppedFile(file) {
           const n1d = parseFloat(row[2]) || 0;
           const n1c = parseFloat(row[3]) || 0;
           if (code && /^\d+$/.test(code)) {
-            OPENING_BALANCES[code] = { n1d, n1c };
+            importedBalances[code] = { n1d, n1c };
             count++;
           }
         });
-        if (count > 0) {
-          showToast(count + ' comptes importes depuis ' + file.name, 'success');
+        const summary = getOpeningBalanceSummary(importedBalances);
+        if (count > 0 && summary.isBalanced) {
+          replaceOpeningBalances(importedBalances);
+          showToast(count + ' comptes importes depuis ' + file.name + ' - balance d\'ouverture equilibree.', 'success');
           render();
+        } else if (count > 0) {
+          showToast('Import refuse: la balance d\'ouverture n\'est pas equilibree (ecart ' + fmt(Math.abs(summary.gap)) + ').', 'error');
         } else {
           showToast('Aucun compte trouve dans ' + file.name + '. Format attendu: Compte | Libelle | S.O.D | S.O.C', 'error');
         }
@@ -2011,16 +2859,22 @@ function handleDroppedFile(file) {
       try {
         const data = JSON.parse(e.target.result);
         const entries = Array.isArray(data) ? data : (data.journal || data.ecritures || []);
+        const importedEntries = [];
+        const totalsByPiece = {};
+        const fallbackPiece = 'IMP-' + String(journalEntries.length + 1).padStart(3, '0');
         let count = 0;
         entries.forEach(entry => {
           const d = parseFloat(entry.debit) || 0;
           const c = parseFloat(entry.credit) || 0;
           if (!entry.compte || (!d && !c)) return;
-          journalEntries.push({
-            id: journalEntries.length + 1,
+          const piece = entry.piece || fallbackPiece;
+          if (!totalsByPiece[piece]) totalsByPiece[piece] = { debit: 0, credit: 0 };
+          totalsByPiece[piece].debit += d;
+          totalsByPiece[piece].credit += c;
+          importedEntries.push({
             date: entry.date || new Date().toISOString().split('T')[0],
             journal: entry.journal || 'OD',
-            piece: entry.piece || ('IMP-' + String(journalEntries.length + 1).padStart(3, '0')),
+            piece,
             compte: String(entry.compte),
             libelle: entry.libelle || 'Import',
             debit: d, credit: c,
@@ -2028,7 +2882,19 @@ function handleDroppedFile(file) {
           });
           count++;
         });
+        const invalidPieces = Object.keys(totalsByPiece).filter((piece) => !isBalancedAmount(totalsByPiece[piece].debit, totalsByPiece[piece].credit));
+        if (invalidPieces.length > 0) {
+          showToast('Import refuse: piece(s) desequilibree(s) ' + invalidPieces.slice(0, 3).join(', ') + '.', 'error');
+          return;
+        }
         if (count > 0) {
+          const startingId = journalEntries.length;
+          importedEntries.forEach((entry, index) => {
+            journalEntries.push({
+              id: startingId + index + 1,
+              ...entry
+            });
+          });
           showToast(count + ' ecritures importees depuis ' + file.name, 'success');
           render();
         } else {
@@ -2047,6 +2913,7 @@ function handleDroppedFile(file) {
 
 function parseBalanceCsv(text) {
   const lines = text.split('\n').slice(1);
+  const balances = {};
   let count = 0;
   lines.forEach(line => {
     const cols = line.split(',');
@@ -2055,11 +2922,15 @@ function parseBalanceCsv(text) {
     const n1d = parseFloat(cols[2]) || 0;
     const n1c = parseFloat(cols[3]) || 0;
     if (code && /^\d+$/.test(code)) {
-      OPENING_BALANCES[code] = { n1d, n1c };
+      balances[code] = { n1d, n1c };
       count++;
     }
   });
-  return count;
+  return {
+    count,
+    balances,
+    ...getOpeningBalanceSummary(balances)
+  };
 }
 
 function showToast(msg, type) {
@@ -2216,6 +3087,70 @@ function saveParametres() {
   if (badge && currentCompanyDetails.raisonSociale) badge.textContent = currentCompanyDetails.raisonSociale;
   const msg = document.getElementById('p-msg');
   if (msg) { msg.style.color = 'var(--green)'; msg.textContent = 'Fiche enregistree avec succes.'; setTimeout(() => { msg.textContent = ''; }, 2500); }
+}
+
+function cloturerExercice() {
+  const snapshot = getClotureSnapshot();
+
+  if (!snapshot.profileComplete) {
+    showToast("Impossible de cloturer: completez d'abord la fiche entreprise.", "error");
+    navigateToTab("parametres");
+    return;
+  }
+  if (!snapshot.validDates) {
+    showToast("Impossible de cloturer: verifiez les dates d'exercice.", "error");
+    navigateToTab("parametres");
+    return;
+  }
+  if (!snapshot.hasData) {
+    showToast("Impossible de cloturer: aucune balance ni ecriture n'est disponible.", "error");
+    return;
+  }
+  if (!snapshot.balanceSummary.isBalanced) {
+    showToast(`Impossible de cloturer: la balance generale presente un ecart de ${fmt(Math.abs(snapshot.balanceSummary.gap))} XOF.`, "error");
+    navigateToTab("balance");
+    return;
+  }
+  if (!snapshot.carryforwardSummary.isBalanced) {
+    showToast("Impossible de cloturer: le report des a-nouveaux n'est pas equilibre.", "error");
+    return;
+  }
+
+  const exerciseLabel = `${formatDateValue(snapshot.exerciceDu)} au ${formatDateValue(snapshot.exerciceAu)}`;
+  const confirmed = window.confirm(
+    `Cloturer l'exercice ${exerciseLabel} ?\n\n` +
+    `Cette action va:\n` +
+    `- reporter les comptes de bilan en a-nouveaux,\n` +
+    `- remettre le journal courant a zero,\n` +
+    `- ouvrir l'exercice suivant.\n\n` +
+    `Resultat reporte: ${fmt(Math.abs(snapshot.resultatExercice))} XOF ${snapshot.resultatExercice >= 0 ? "benefice" : "perte"}.`
+  );
+  if (!confirmed) return;
+
+  const history = Array.isArray(currentCompanyDetails.closureHistory) ? currentCompanyDetails.closureHistory : [];
+  currentCompanyDetails.closureHistory = [{
+    closedAt: new Date().toISOString(),
+    exerciseLabel,
+    exerciceDu: snapshot.exerciceDu,
+    exerciceAu: snapshot.exerciceAu,
+    resultatExercice: snapshot.resultatExercice,
+    totalDebit: snapshot.balanceSummary.totalDebit,
+    totalCredit: snapshot.balanceSummary.totalCredit,
+    openingAccounts: snapshot.carryforwardSummary.count
+  }, ...history].slice(0, 12);
+
+  replaceOpeningBalances(snapshot.carryforward);
+  journalEntries = [];
+
+  if (snapshot.nextExerciceDu) currentCompanyDetails.exerciceDu = snapshot.nextExerciceDu;
+  if (snapshot.nextExerciceAu) currentCompanyDetails.exerciceAu = snapshot.nextExerciceAu;
+
+  saveCompanyData();
+  render();
+  showToast(
+    `Exercice cloture avec succes. Nouvel exercice: ${formatDateValue(currentCompanyDetails.exerciceDu)} au ${formatDateValue(currentCompanyDetails.exerciceAu)}.`,
+    "success"
+  );
 }
 
 // Initial auth check (shows login or loads company data)
