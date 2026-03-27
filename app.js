@@ -259,11 +259,32 @@ function closeMobileMenu() {
 if (mobileBtn) mobileBtn.addEventListener("click", openMobileMenu);
 if (mobileOverlay) mobileOverlay.addEventListener("click", closeMobileMenu);
 
+function getTabFromLocationHash() {
+  if (typeof window === "undefined") return "";
+  const hash = String(window.location.hash || "").replace(/^#/, "").trim();
+  if (!hash) return "";
+  return document.querySelector(`.nav-btn[data-tab="${hash}"]`) ? hash : "";
+}
+
+function syncTabFromLocationHash() {
+  const tabFromHash = getTabFromLocationHash();
+  if (tabFromHash) currentTab = tabFromHash;
+}
+
+function updateLocationHashForTab(tab) {
+  if (typeof window === "undefined" || typeof history === "undefined" || typeof history.replaceState !== "function") return;
+  const nextUrl = tab === "dashboard"
+    ? `${window.location.pathname}${window.location.search}`
+    : `${window.location.pathname}${window.location.search}#${tab}`;
+  history.replaceState(null, "", nextUrl);
+}
+
 function navigateToTab(tab) {
   const target = document.querySelector(`.nav-btn[data-tab="${tab}"]`);
   if (!target) return;
   document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
   currentTab = tab;
+  updateLocationHashForTab(tab);
   closeMobileMenu();
   render();
   window.scrollTo(0, 0);
@@ -273,6 +294,18 @@ function navigateToTab(tab) {
 document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.addEventListener("click", () => navigateToTab(btn.dataset.tab));
 });
+
+if (typeof window !== "undefined") {
+  window.addEventListener("hashchange", () => {
+    const tabFromHash = getTabFromLocationHash();
+    const nextTab = tabFromHash || "dashboard";
+    if (nextTab === currentTab) return;
+    currentTab = nextTab;
+    document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === nextTab));
+    render();
+    window.scrollTo(0, 0);
+  });
+}
 
 function getPlan() {
   if (currentRef === "sycebnl") {
@@ -1510,6 +1543,7 @@ async function shareAmortCsv() {
 // ═══════════════════════════════════════════════════════════
 function render() {
   const main = document.getElementById("main-content");
+  document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === currentTab));
   switch (currentTab) {
     case "dashboard": main.innerHTML = renderDashboard(); break;
     case "plan": main.innerHTML = renderPlan(); break;
@@ -1555,6 +1589,7 @@ function renderDashboard() {
   const hasProfile = hasCompanyProfileData();
   const profileComplete = isCompanyProfileComplete();
   const needsSetup = !profileComplete || !hasOpeningBalances || journalEntries.length === 0;
+  const clotureSnapshot = getClotureSnapshot();
 
   // Financial ratios from balance
   let totalActifNet = 0, totalPassif = 0, totalProduits = 0, totalCharges = 0;
@@ -1621,6 +1656,32 @@ function renderDashboard() {
       <div class="kpi"><div class="kpi-label">Total credit</div><div class="kpi-value" style="color:var(--red);font-size:1.1rem;">${fmt(totalCredit)}</div><div class="kpi-note">XOF</div></div>
       <div class="kpi"><div class="kpi-label">Equilibre</div><div class="kpi-value" style="color:${balanceSummary.isBalanced ? 'var(--green)' : 'var(--red)'};">${balanceSummary.isBalanced ? 'OK' : 'ERREUR'}</div><div class="kpi-note">${balanceSummary.isBalanced ? 'Bilan pret a etre equilibre' : 'Ecart cumule: ' + fmt(Math.abs(balanceSummary.gap))}</div></div>
       <div class="kpi"><div class="kpi-label">Etats OHADA</div><div class="kpi-value">17</div><div class="kpi-note">Pays membres</div></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Actions rapides</div>
+          <div class="card-subtitle">Acces direct a la cloture, au plan financier et aux exports.</div>
+        </div>
+      </div>
+      <div class="grid-3">
+        <div class="card" style="background:var(--surface2);">
+          <div style="font-weight:700;margin-bottom:8px;">Cloture de l'exercice</div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Statut: <strong style="color:${clotureSnapshot.canClose ? 'var(--green)' : 'var(--orange)'};">${clotureSnapshot.canClose ? 'Pret a cloturer' : 'A verifier'}</strong></div>
+          <button class="btn btn-gold" style="width:100%;" onclick="navigateToTab('cloture')">Ouvrir la cloture</button>
+        </div>
+        <div class="card" style="background:var(--surface2);">
+          <div style="font-weight:700;margin-bottom:8px;">Plan financier</div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Exportez le modele previsionnel exact rempli avec vos donnees actuelles.</div>
+          <button class="btn btn-outline" style="width:100%;" onclick="navigateToTab('previsionnel')">Ouvrir le plan financier</button>
+        </div>
+        <div class="card" style="background:var(--surface2);">
+          <div style="font-weight:700;margin-bottom:8px;">Declaration DSF</div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Generez LIASSE.xlsx et partagez-la directement depuis l'application.</div>
+          <button class="btn btn-outline" style="width:100%;" onclick="navigateToTab('dsf')">Ouvrir la DSF</button>
+        </div>
+      </div>
     </div>
 
     ${(margePct !== null || liquidite !== null || endettement !== null) ? `
@@ -2461,56 +2522,191 @@ function renderCloture() {
 function renderPrevisionnel() {
   const snapshot = getForecastTemplateSnapshot();
   const projectName = snapshot.projectName || "Projet OHADA Compta";
-  const totals = [
-    { label: "CA marchandises annualise", value: snapshot.merchandiseRevenue },
-    { label: "CA services annualise", value: snapshot.serviceRevenue },
-    { label: "Tresorerie de depart", value: snapshot.startingCash },
-    { label: "Stock de depart", value: snapshot.openingStock },
-    { label: "Investissements de depart", value: snapshot.intangibleSetup + snapshot.realEstateSetup + snapshot.worksSetup + snapshot.equipmentSetup + snapshot.officeEquipmentSetup },
-    { label: "Salaires employes annee 1", value: snapshot.employeeYear1 }
+  const totalRevenue = snapshot.merchandiseRevenue + snapshot.serviceRevenue;
+  const totalSetup = snapshot.intangibleSetup + snapshot.realEstateSetup + snapshot.worksSetup + snapshot.equipmentSetup + snapshot.officeEquipmentSetup;
+  const projectedYear2Revenue = Math.round(totalRevenue * (1 + snapshot.growthYear2));
+  const projectedYear3Revenue = Math.round(projectedYear2Revenue * (1 + snapshot.growthYear3));
+  const profileReady = isCompanyProfileComplete();
+  const accountingReady = totalRevenue > 0 || totalSetup > 0 || snapshot.startingCash > 0 || snapshot.openingStock > 0;
+  const checklist = [
+    {
+      label: "Fiche entreprise",
+      ready: profileReady,
+      hint: profileReady ? "Identite et exercice disponibles." : "Completez raison sociale, pays, NIF, siege et exercice."
+    },
+    {
+      label: "Base comptable",
+      ready: accountingReady,
+      hint: accountingReady ? "Des soldes ou mouvements existent deja." : "Ajoutez une balance d'ouverture ou des ecritures."
+    },
+    {
+      label: "Hypotheses exportables",
+      ready: snapshot.assumptionsCount >= 4,
+      hint: snapshot.assumptionsCount >= 4 ? "Le modele peut etre pre-rempli avec une base utile." : "Renseignez plus de donnees pour un export plus riche."
+    }
   ];
+  const totals = [
+    { label: "Chiffre d'affaires annualise", value: totalRevenue, note: "Annee 1" },
+    { label: "Investissements de depart", value: totalSetup, note: "Immobilisations" },
+    { label: "Tresorerie et stock de depart", value: snapshot.startingCash + snapshot.openingStock, note: "Lancement" },
+    { label: "Projection de CA annee 3", value: projectedYear3Revenue, note: "Scenario calcule" }
+  ];
+  const sourceRows = [
+    ["Identite du projet", projectName, "Fiche entreprise"],
+    ["Forme juridique exportee", snapshot.legalStatus, "Parametres entreprise"],
+    ["Activite retenue", snapshot.salesType, "Activite principale / comptes 70"],
+    ["CA marchandises", fmt(snapshot.merchandiseRevenue), "Comptes 701 a 704"],
+    ["CA services", fmt(snapshot.serviceRevenue), "Comptes 706 a 707"],
+    ["Salaires annee 1", fmt(snapshot.employeeYear1), "Comptes 661 a 663"]
+  ];
+  const monthlyRows = snapshot.merchandiseMonthly.map((amount, index) => ({
+    month: index + 1,
+    merchandise: amount,
+    service: snapshot.serviceMonthly[index] || 0,
+    total: amount + (snapshot.serviceMonthly[index] || 0)
+  })).slice(0, 6);
 
   return `
-    <div class="card">
-      <div class="card-header">
-        <div>
-          <div class="card-title">Plan financier previsionnel</div>
-          <div class="card-subtitle">Remplissage du modele exact ${EXACT_FORECAST_DOWNLOAD_NAME} a partir des donnees d'OHADA Compta.</div>
+    <div class="stack">
+      <div class="card" style="border-color:rgba(200,146,42,0.32);background:linear-gradient(180deg, rgba(200,146,42,0.08), rgba(10,22,40,0.96));">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Plan financier previsionnel</div>
+            <div class="card-subtitle">Module distinct du tableau de bord pour preparer puis exporter ${EXACT_FORECAST_DOWNLOAD_NAME}.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-outline" onclick="navigateToTab('parametres')">Completer la fiche</button>
+            <button class="btn btn-outline" onclick="navigateToTab('balance')">Verifier la balance</button>
+            <button class="btn btn-gold" onclick="downloadForecastWorkbook()">Telecharger le modele rempli</button>
+          </div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-outline" onclick="shareForecastWorkbook()">Partager le modele</button>
-          <button class="btn btn-gold" onclick="downloadForecastWorkbook()">Telecharger le modele rempli</button>
+        <div class="grid-3">
+          ${checklist.map((item) => `
+            <div class="card" style="background:var(--surface2);padding:16px;">
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <strong>${item.label}</strong>
+                <span style="font-size:0.74rem;font-weight:700;color:${item.ready ? "var(--green)" : "var(--orange)"};">${item.ready ? "Pret" : "A revoir"}</span>
+              </div>
+              <div style="margin-top:10px;font-size:0.84rem;color:var(--muted);line-height:1.6;">${item.hint}</div>
+            </div>
+          `).join("")}
         </div>
       </div>
-      <div class="info-box" style="margin-bottom:16px;">
-        <strong>Modele cible:</strong> ${EXACT_FORECAST_DOWNLOAD_NAME}<br><br>
-        OHADA Compta pre-remplit l'identite du projet, le statut juridique, les contacts, quelques besoins de demarrage, le chiffre d'affaires annualise, un ratio d'achats, les salaires employes et les hypotheses de croissance. Le classeur reste entierement modifiable dans Excel apres export.
-      </div>
-      <div class="grid-3">
+
+      <div class="kpi-grid" style="margin-bottom:0;">
         ${totals.map((item) => `
           <div class="kpi">
             <div class="kpi-label">${item.label}</div>
             <div class="kpi-value" style="font-size:1rem;">${fmt(item.value)}</div>
-            <div class="kpi-note">XOF</div>
+            <div class="kpi-note">${item.note} · XOF</div>
           </div>
         `).join("")}
       </div>
-      <div class="grid-2" style="margin-top:16px;">
+
+      <div class="grid-2">
         <div class="card" style="background:var(--surface2);">
-          <div class="section-title">Hypotheses injectees</div>
-          <div style="font-size:0.85rem;color:var(--muted);line-height:1.8;">
+          <div class="section-title">Vue de synthese</div>
+          <div style="font-size:0.85rem;color:var(--muted);line-height:1.85;">
             Projet: <strong>${projectName}</strong><br>
-            Statut juridique: <strong>${snapshot.legalStatus}</strong><br>
+            Statut juridique exporte: <strong>${snapshot.legalStatus}</strong><br>
             Activite retenue: <strong>${snapshot.salesType}</strong><br>
             Croissance annee 2: <strong>${(snapshot.growthYear2 * 100).toFixed(0)}%</strong><br>
             Croissance annee 3: <strong>${(snapshot.growthYear3 * 100).toFixed(0)}%</strong><br>
-            Cout d'achat des marchandises: <strong>${(snapshot.purchaseRatio * 100).toFixed(0)}%</strong>
+            Cout d'achat des marchandises: <strong>${(snapshot.purchaseRatio * 100).toFixed(0)}%</strong><br>
+            Salaires employes annee 1 a 3: <strong>${fmt(snapshot.employeeYear1)}</strong> / <strong>${fmt(snapshot.employeeYear2)}</strong> / <strong>${fmt(snapshot.employeeYear3)}</strong>
           </div>
         </div>
         <div class="card" style="background:var(--surface2);">
-          <div class="section-title">Points a revoir dans Excel</div>
+          <div class="section-title">Actions du module</div>
           <div style="font-size:0.85rem;color:var(--muted);line-height:1.8;">
-            Verifiez les investissements de demarrage ligne par ligne, les hypotheses mensuelles de vente, la remuneration du dirigeant, l'ACRE et les delais clients/fournisseurs. Les formes juridiques OHADA qui n'existent pas dans ce modele sont rapprochees du statut le plus proche. Ce modele est pre-rempli automatiquement, mais il doit rester un document de travail ajuste par l'entreprise.
+            1. Ce module collecte les hypotheses a partir de vos soldes et de la fiche entreprise.<br>
+            2. Il prepare le fichier exact <strong>${EXACT_FORECAST_DOWNLOAD_NAME}</strong>.<br>
+            3. Le classeur exporte reste modifiable dans Excel apres telechargement.<br><br>
+            <button class="btn btn-outline" onclick="shareForecastWorkbook()">Partager le modele</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Donnees injectees dans le modele</div>
+            <div class="card-subtitle">Apercu des informations reprises avant export Excel.</div>
+          </div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Rubrique</th>
+                <th>Valeur</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sourceRows.map((row) => `
+                <tr>
+                  <td>${row[0]}</td>
+                  <td>${row[1]}</td>
+                  <td>${row[2]}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Projection mensuelle N+1</div>
+              <div class="card-subtitle">Apercu des 6 premiers mois utilises pour le pre-remplissage.</div>
+            </div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Mois</th>
+                  <th>Marchandises</th>
+                  <th>Services</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${monthlyRows.map((row) => `
+                  <tr>
+                    <td>M${row.month}</td>
+                    <td>${fmt(row.merchandise)}</td>
+                    <td>${fmt(row.service)}</td>
+                    <td>${fmt(row.total)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Controle avant export</div>
+              <div class="card-subtitle">Ce qu'il faut verifier avant de partager le fichier.</div>
+            </div>
+          </div>
+          <div class="stack">
+            <div class="info-box">
+              <strong>Modele cible:</strong> ${EXACT_FORECAST_DOWNLOAD_NAME}<br><br>
+              Verifiez les investissements de demarrage ligne par ligne, la remuneration du dirigeant, l'ACRE, les delais clients/fournisseurs et les hypotheses mensuelles de vente.
+            </div>
+            <div class="card" style="background:var(--surface2);">
+              <div style="font-size:0.84rem;color:var(--muted);line-height:1.8;">
+                CA annee 1: <strong>${fmt(totalRevenue)}</strong> XOF<br>
+                CA projete annee 2: <strong>${fmt(projectedYear2Revenue)}</strong> XOF<br>
+                CA projete annee 3: <strong>${fmt(projectedYear3Revenue)}</strong> XOF<br>
+                Besoin de lancement estime: <strong>${fmt(totalSetup + snapshot.startingCash + snapshot.openingStock)}</strong> XOF
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3154,4 +3350,5 @@ function cloturerExercice() {
 }
 
 // Initial auth check (shows login or loads company data)
+syncTabFromLocationHash();
 checkAuth();
