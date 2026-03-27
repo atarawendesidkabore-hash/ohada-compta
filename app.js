@@ -101,7 +101,16 @@ function getReferentialLabel(ref = currentRef) {
 
 function syncReferentielSelect() {
   const sel = document.getElementById("referentiel-select");
-  if (sel) sel.value = normalizeReferential(currentRef);
+  const lockNote = document.getElementById("referentiel-lock-note");
+  if (sel) {
+    sel.value = normalizeReferential(currentRef);
+    const locked = !!currentCompanyId;
+    sel.disabled = locked;
+    sel.title = locked
+      ? "Le systeme comptable est gere par le setup entreprise et les parametres."
+      : "Choisissez le systeme comptable.";
+  }
+  if (lockNote) lockNote.style.display = currentCompanyId ? "inline-block" : "none";
 }
 
 function updateCurrentAccountPreferences(patch = {}) {
