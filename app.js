@@ -10,6 +10,7 @@ let filterClass = null;
 let currentCompanyDetails = {};
 const COMPANY_PROFILE_FIELDS = [
   "raisonSociale",
+  "accountingSystem",
   "formeJuridique",
   "sigleUsuel",
   "rccm",
@@ -33,7 +34,7 @@ function hasCompanyProfileData() {
 }
 
 function isCompanyProfileComplete() {
-  return ["raisonSociale", "formeJuridique", "nif", "siegeSocial", "pays", "exerciceDu", "exerciceAu"]
+  return ["raisonSociale", "accountingSystem", "formeJuridique", "nif", "siegeSocial", "pays", "exerciceDu", "exerciceAu"]
     .every((key) => String(currentCompanyDetails[key] || "").trim() !== "");
 }
 
@@ -86,8 +87,73 @@ function getAccounts() {
 }
 function saveAccounts(arr) { localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(arr)); }
 
+function normalizeReferential(ref) {
+  return ref === "sycebnl" ? "sycebnl" : "syscohada";
+}
+
+function normalizeSycebnlEntityType(type) {
+  return type === "projets" ? "projets" : "associations";
+}
+
+function getReferentialLabel(ref = currentRef) {
+  return normalizeReferential(ref) === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise";
+}
+
+function syncReferentielSelect() {
+  const sel = document.getElementById("referentiel-select");
+  if (sel) sel.value = normalizeReferential(currentRef);
+}
+
+function updateCurrentAccountPreferences(patch = {}) {
+  if (!currentCompanyId) return;
+  const accounts = getAccounts();
+  const index = accounts.findIndex((account) => account.id === currentCompanyId);
+  if (index === -1) return;
+  accounts[index] = Object.assign({}, accounts[index], patch);
+  saveAccounts(accounts);
+}
+
+function applyAccountingSystemSelection(ref, options = {}) {
+  currentRef = normalizeReferential(ref);
+  const nextSycebnlType = normalizeSycebnlEntityType(options.sycebnlType || currentCompanyDetails.sycebnlEntityType || sycebnlType);
+  sycebnlType = nextSycebnlType;
+  currentCompanyDetails.accountingSystem = currentRef;
+  currentCompanyDetails.sycebnlEntityType = nextSycebnlType;
+  syncReferentielSelect();
+  updateCurrentAccountPreferences({
+    preferredRef: currentRef,
+    preferredSycebnlType: nextSycebnlType
+  });
+  if (options.save !== false) saveCompanyData();
+}
+
+function syncRegisterAccountingSystemUI() {
+  const select = document.getElementById("reg-accountingSystem");
+  const wrap = document.getElementById("reg-sycebnl-wrap");
+  if (!select || !wrap) return;
+  wrap.style.display = normalizeReferential(select.value) === "sycebnl" ? "" : "none";
+}
+
+function syncParamAccountingSystemUI() {
+  const select = document.getElementById("p-accountingSystem");
+  const wrap = document.getElementById("p-sycebnl-wrap");
+  if (!select || !wrap) return;
+  wrap.style.display = normalizeReferential(select.value) === "sycebnl" ? "" : "none";
+}
+
+function bindStaticAuthFormEvents() {
+  const regSystem = document.getElementById("reg-accountingSystem");
+  if (regSystem && !regSystem.dataset.bound) {
+    regSystem.addEventListener("change", syncRegisterAccountingSystemUI);
+    regSystem.dataset.bound = "1";
+  }
+  syncRegisterAccountingSystemUI();
+}
+
 function saveCompanyData() {
   if (!currentCompanyId) return;
+  currentCompanyDetails.accountingSystem = normalizeReferential(currentCompanyDetails.accountingSystem || currentRef);
+  currentCompanyDetails.sycebnlEntityType = normalizeSycebnlEntityType(currentCompanyDetails.sycebnlEntityType || sycebnlType);
   const data = {
     journalEntries,
     openingBalances: Object.assign({}, OPENING_BALANCES),
@@ -112,27 +178,35 @@ function loadCompanyData(id) {
     if (data.currentRef) currentRef = data.currentRef;
     if (data.sycebnlType) sycebnlType = data.sycebnlType;
     if (data.companyDetails) currentCompanyDetails = data.companyDetails;
-    // Sync referentiel select
-    const sel = document.getElementById('referentiel-select');
-    if (sel) sel.value = currentRef;
+    if (!currentCompanyDetails.accountingSystem) currentCompanyDetails.accountingSystem = normalizeReferential(data.currentRef || currentRef);
+    if (!currentCompanyDetails.sycebnlEntityType) currentCompanyDetails.sycebnlEntityType = normalizeSycebnlEntityType(data.sycebnlType || sycebnlType);
+    currentRef = normalizeReferential(currentCompanyDetails.accountingSystem || currentRef);
+    sycebnlType = normalizeSycebnlEntityType(currentCompanyDetails.sycebnlEntityType || sycebnlType);
+    syncReferentielSelect();
   } catch(e) { console.warn('loadCompanyData error', e); }
 }
 
 function loginCompany(id) {
   currentCompanyId = id;
   localStorage.setItem(SESSION_KEY, id);
+  const accounts = getAccounts();
+  const acct = accounts.find(a => a.id === id);
   // Reset to blank state — new companies start empty, returning ones get their data loaded
   journalEntries = [];
   Object.keys(OPENING_BALANCES).forEach(k => delete OPENING_BALANCES[k]);
-  currentRef = 'syscohada';
-  sycebnlType = 'associations';
-  currentCompanyDetails = {};
-  const selReset = document.getElementById('referentiel-select');
-  if (selReset) selReset.value = 'syscohada';
+  currentRef = normalizeReferential(acct && acct.preferredRef ? acct.preferredRef : 'syscohada');
+  sycebnlType = normalizeSycebnlEntityType(acct && acct.preferredSycebnlType ? acct.preferredSycebnlType : 'associations');
+  currentCompanyDetails = {
+    accountingSystem: currentRef,
+    sycebnlEntityType: sycebnlType
+  };
+  syncReferentielSelect();
   loadCompanyData(id);
+  applyAccountingSystemSelection(currentCompanyDetails.accountingSystem || currentRef, {
+    sycebnlType: currentCompanyDetails.sycebnlEntityType || sycebnlType,
+    save: false
+  });
   // Update topbar
-  const accounts = getAccounts();
-  const acct = accounts.find(a => a.id === id);
   const badge = document.getElementById('company-name-display');
   const logoutBtn = document.getElementById('btn-logout');
   if (badge) { badge.textContent = acct ? acct.company : 'Mon compte'; badge.style.display = 'inline-block'; }
@@ -156,8 +230,7 @@ function logoutCompany() {
   currentTab = 'dashboard';
   searchTerm = "";
   filterClass = null;
-  const sel = document.getElementById('referentiel-select');
-  if (sel) sel.value = 'syscohada';
+  syncReferentielSelect();
   // Hide topbar elements
   const badge = document.getElementById('company-name-display');
   const logoutBtn = document.getElementById('btn-logout');
@@ -178,6 +251,7 @@ function showAuthTab(tab) {
   document.getElementById('form-register').style.display = tab === 'register' ? '' : 'none';
   document.getElementById('tab-login').classList.toggle('active', tab === 'login');
   document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+  bindStaticAuthFormEvents();
 }
 
 function handleLogin() {
@@ -194,6 +268,8 @@ function handleLogin() {
 
 function handleRegister() {
   const company = (document.getElementById('reg-company').value || '').trim();
+  const accountingSystem = normalizeReferential((document.getElementById('reg-accountingSystem').value || 'syscohada').trim());
+  const regSycebnlType = normalizeSycebnlEntityType((document.getElementById('reg-sycebnlType').value || 'associations').trim());
   const email   = (document.getElementById('reg-email').value || '').trim().toLowerCase();
   const pass    = document.getElementById('reg-pass').value || '';
   const pass2   = document.getElementById('reg-pass2').value || '';
@@ -205,7 +281,15 @@ function handleRegister() {
   const accounts = getAccounts();
   if (accounts.find(a => a.email === email)) { msg.className = 'auth-msg error'; msg.textContent = 'Cet email est deja utilise.'; return; }
   const id = 'c_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  accounts.push({ id, company, email, passHash: simpleHash(pass), createdAt: new Date().toISOString() });
+  accounts.push({
+    id,
+    company,
+    email,
+    passHash: simpleHash(pass),
+    preferredRef: accountingSystem,
+    preferredSycebnlType: regSycebnlType,
+    createdAt: new Date().toISOString()
+  });
   saveAccounts(accounts);
   msg.className = 'auth-msg success';
   msg.textContent = 'Compte cree ! Connexion en cours...';
@@ -233,13 +317,16 @@ setInterval(() => {
 
 // Referentiel switch
 document.getElementById("referentiel-select").addEventListener("change", (e) => {
-  currentRef = e.target.value;
+  applyAccountingSystemSelection(e.target.value);
   render();
 });
 
 // SYCEBNL entity type switch (injected dynamically when SYCEBNL is active)
 function setSycebnlType(type) {
-  sycebnlType = type;
+  sycebnlType = normalizeSycebnlEntityType(type);
+  currentCompanyDetails.sycebnlEntityType = sycebnlType;
+  updateCurrentAccountPreferences({ preferredSycebnlType: sycebnlType });
+  saveCompanyData();
   render();
 }
 
@@ -1578,7 +1665,7 @@ function renderDashboard() {
   const balanceSummary = getComputedBalanceSummary(bal);
   const totalDebit = balanceSummary.totalDebit;
   const totalCredit = balanceSummary.totalCredit;
-  const refLabel = currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise";
+  const refLabel = getReferentialLabel();
 
   // Company info
   const accounts = getAccounts();
@@ -1626,7 +1713,7 @@ function renderDashboard() {
             <strong>Fiche entreprise</strong>
             <span style="font-size:0.74rem;font-weight:700;color:${profileComplete ? 'var(--green)' : hasProfile ? 'var(--orange)' : 'var(--muted)'};">${profileComplete ? 'Complete' : hasProfile ? 'A completer' : 'A renseigner'}</span>
           </div>
-          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Renseignez la raison sociale, le NIF, l'exercice et les informations legales.</div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Renseignez la raison sociale, choisissez le systeme comptable, le NIF, l'exercice et les informations legales.</div>
           <button class="btn btn-outline" style="width:100%;" onclick="navigateToTab('parametres')">Ouvrir les parametres</button>
         </div>
         <div class="card" style="background:var(--surface2);border-color:rgba(0,229,118,0.2);">
@@ -1730,7 +1817,8 @@ function renderDashboard() {
           : "Le SYSCOHADA revise s'applique a toutes les entites a but lucratif des 17 Etats membres de l'OHADA. Il est conforme a l'Acte Uniforme AUDCIF et structure en 8 classes de comptes."
         }<br><br>
         <strong>Etats financiers:</strong> Bilan | Compte de resultat | Tableau de flux de tresorerie (TFT) | Notes annexes<br>
-        <strong>Pays membres:</strong> ${OHADA_MEMBER_STATES.join(", ")}
+        <strong>Pays membres:</strong> ${OHADA_MEMBER_STATES.join(", ")}<br>
+        <strong>Choix entreprise:</strong> ce referentiel est maintenant memorise dans la fiche entreprise et dans le compte.
         <div style="margin-top:14px;">
           <button class="btn btn-outline" onclick="navigateToTab('veille')">Ouvrir la veille OHADA quotidienne</button>
         </div>
@@ -2883,6 +2971,12 @@ function renderComparaison() {
 // EVENT HANDLERS
 // ═══════════════════════════════════════════════════════════
 function attachEvents() {
+  const paramAccountingSystem = document.getElementById("p-accountingSystem");
+  if (paramAccountingSystem) {
+    paramAccountingSystem.addEventListener("change", syncParamAccountingSystemUI);
+  }
+  syncParamAccountingSystemUI();
+
   // Plan search
   const searchEl = document.getElementById("plan-search");
   if (searchEl) {
@@ -3146,6 +3240,8 @@ function renderParametres() {
   const d = currentCompanyDetails;
   const accounts = getAccounts();
   const acct = currentCompanyId ? accounts.find(a => a.id === currentCompanyId) : null;
+  const selectedAccountingSystem = normalizeReferential(d.accountingSystem || currentRef);
+  const selectedSycebnlType = normalizeSycebnlEntityType(d.sycebnlEntityType || sycebnlType);
 
   const formesJuridiques = ["SA","SARL","SAS","SASU","EURL","SNC","SCS","GIE","Cooperative","Association","ONG","Fondation","Projet de developpement","Etablissement public","Autre"];
   const regimesFiscaux = ["Reel Normal d'Imposition (RNI)","Reel Simplifie d'Imposition (RSI)","Contribution des Micro-Entreprises (CME)","Forfait d'Imposition","Exonere"];
@@ -3154,10 +3250,24 @@ function renderParametres() {
     <div class="card">
       <div class="card-header">
         <div class="card-title">Identification de l'entreprise</div>
-        <div class="card-subtitle">Ces informations figurent sur tous vos etats financiers OHADA.</div>
+        <div class="card-subtitle">Le referentiel comptable choisi ici devient celui du dossier et s'applique immediatement.</div>
       </div>
 
       <div class="grid-2">
+        <div class="form-group">
+          <div class="form-label">Systeme comptable</div>
+          <select class="form-select" id="p-accountingSystem">
+            <option value="syscohada" ${selectedAccountingSystem === "syscohada" ? "selected" : ""}>SYSCOHADA Revise</option>
+            <option value="sycebnl" ${selectedAccountingSystem === "sycebnl" ? "selected" : ""}>SYCEBNL</option>
+          </select>
+        </div>
+        <div class="form-group" id="p-sycebnl-wrap" style="${selectedAccountingSystem === "sycebnl" ? "" : "display:none;"}">
+          <div class="form-label">Type d'entite SYCEBNL</div>
+          <select class="form-select" id="p-sycebnlType">
+            <option value="associations" ${selectedSycebnlType === "associations" ? "selected" : ""}>Association / ONG / Fondation</option>
+            <option value="projets" ${selectedSycebnlType === "projets" ? "selected" : ""}>Projet de developpement</option>
+          </select>
+        </div>
         <div class="form-group">
           <div class="form-label">Raison sociale</div>
           <input class="form-input" id="p-raisonSociale" value="${d.raisonSociale || (acct ? acct.company : '')}" placeholder="Nom officiel de l'entreprise">
@@ -3269,6 +3379,10 @@ function renderParametres() {
 }
 
 function saveParametres() {
+  const accountingSystemEl = document.getElementById('p-accountingSystem');
+  const sycebnlTypeEl = document.getElementById('p-sycebnlType');
+  const accountingSystem = normalizeReferential(accountingSystemEl ? accountingSystemEl.value : currentRef);
+  const nextSycebnlType = normalizeSycebnlEntityType(sycebnlTypeEl ? sycebnlTypeEl.value : sycebnlType);
   const fields = ['raisonSociale','formeJuridique','sigleUsuel','rccm','nif','nes','siegeSocial','activitePrincipale',
                   'capitalSocial','regimeFiscal','pays','exerciceDu','exerciceAu',
                   'tel','emailCompta','expertComptable','commissaire',
@@ -3277,12 +3391,18 @@ function saveParametres() {
     const el = document.getElementById('p-' + f);
     if (el) currentCompanyDetails[f] = el.value.trim();
   });
+  applyAccountingSystemSelection(accountingSystem, { sycebnlType: nextSycebnlType, save: false });
   saveCompanyData();
   // Refresh topbar badge with updated raison sociale
   const badge = document.getElementById('company-name-display');
   if (badge && currentCompanyDetails.raisonSociale) badge.textContent = currentCompanyDetails.raisonSociale;
   const msg = document.getElementById('p-msg');
-  if (msg) { msg.style.color = 'var(--green)'; msg.textContent = 'Fiche enregistree avec succes.'; setTimeout(() => { msg.textContent = ''; }, 2500); }
+  if (msg) {
+    msg.style.color = 'var(--green)';
+    msg.textContent = `Fiche enregistree avec succes. Referentiel actif: ${getReferentialLabel()}.`;
+    setTimeout(() => { msg.textContent = ''; }, 2500);
+  }
+  render();
 }
 
 function cloturerExercice() {
@@ -3351,4 +3471,5 @@ function cloturerExercice() {
 
 // Initial auth check (shows login or loads company data)
 syncTabFromLocationHash();
+bindStaticAuthFormEvents();
 checkAuth();
