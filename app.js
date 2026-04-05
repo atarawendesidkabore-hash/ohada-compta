@@ -28,6 +28,88 @@ const COMPANY_PROFILE_FIELDS = [
   "expertComptable",
   "commissaireAuxComptes"
 ];
+const MONTE_CARLO_FIELD_IDS = [
+  "baseRevenue",
+  "baseFixedCosts",
+  "baseDepreciation",
+  "baseCapex",
+  "taxRate",
+  "iterations",
+  "revenueGrowthMin",
+  "revenueGrowthMode",
+  "revenueGrowthMax",
+  "grossMarginMin",
+  "grossMarginMode",
+  "grossMarginMax",
+  "fixedCostMin",
+  "fixedCostMode",
+  "fixedCostMax",
+  "workingCapitalMin",
+  "workingCapitalMode",
+  "workingCapitalMax",
+  "capexMin",
+  "capexMode",
+  "capexMax"
+];
+const MONTE_CARLO_PERCENT_FIELDS = new Set([
+  "taxRate",
+  "revenueGrowthMin",
+  "revenueGrowthMode",
+  "revenueGrowthMax",
+  "grossMarginMin",
+  "grossMarginMode",
+  "grossMarginMax",
+  "workingCapitalMin",
+  "workingCapitalMode",
+  "workingCapitalMax"
+]);
+const COST_REDUCTION_STATUS_OPTIONS = [
+  "A etudier",
+  "Priorite 30 jours",
+  "En cours",
+  "Validee",
+  "Appliquee"
+];
+const COST_REDUCTION_PILLARS = [
+  {
+    key: "combinaison",
+    title: "Combinaison",
+    description: "Mutualiser les achats, regrouper les besoins et profiter des effets de volume."
+  },
+  {
+    key: "adaptation",
+    title: "Adaptation",
+    description: "Repenser les specifications, le niveau de service et la facon d'executer."
+  },
+  {
+    key: "elimination",
+    title: "Elimination",
+    description: "Supprimer les depenses sans impact direct sur la proposition de valeur."
+  },
+  {
+    key: "substitution",
+    title: "Substitution",
+    description: "Remplacer une ressource, un fournisseur ou un processus par une option plus efficiente."
+  },
+  {
+    key: "reaffectation",
+    title: "Reaffectation",
+    description: "Reutiliser les equipes, actifs et budgets sous-employes avant tout nouvel achat."
+  },
+  {
+    key: "optimisation",
+    title: "Optimisation",
+    description: "Mesurer les couts, automatiser, securiser la marge et piloter les actions jusqu'au resultat."
+  }
+];
+const COST_REDUCTION_ERRORS = [
+  "Eviter les coupes generales sans analyse detaillee des couts.",
+  "Ne pas ralentir l'exploitation en supprimant des depenses critiques.",
+  "Ne pas negliger le suivi du cash-flow, des prix et des marges.",
+  "Verifier les contrats fournisseurs avant renegociation ou resiliation.",
+  "Maintenir les actions dans le temps avec responsables et echeances claires.",
+  "Profiter du numerique sans ajouter des abonnements inutiles ou redondants."
+];
 
 function hasCompanyProfileData() {
   return COMPANY_PROFILE_FIELDS.some((key) => String(currentCompanyDetails[key] || "").trim() !== "");
@@ -412,6 +494,96 @@ function getPlan() {
 }
 
 function fmt(n) { return n.toLocaleString("fr-FR"); }
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function fmtPercent(value, digits = 1) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "—";
+  return `${(num * 100).toFixed(digits)}%`;
+}
+
+function percentile(sortedValues, ratio) {
+  if (!Array.isArray(sortedValues) || !sortedValues.length) return 0;
+  const bounded = clampNumber(ratio, 0, 1, 0.5);
+  const position = (sortedValues.length - 1) * bounded;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sortedValues[lower];
+  const weight = position - lower;
+  return sortedValues[lower] + ((sortedValues[upper] - sortedValues[lower]) * weight);
+}
+
+function average(values) {
+  if (!Array.isArray(values) || !values.length) return 0;
+  return values.reduce((sum, value) => sum + (Number(value) || 0), 0) / values.length;
+}
+
+function triangularSample(minValue, modeValue, maxValue) {
+  let min = Number(minValue);
+  let mode = Number(modeValue);
+  let max = Number(maxValue);
+  if (!Number.isFinite(min) || !Number.isFinite(mode) || !Number.isFinite(max)) return 0;
+  if (min > max) [min, max] = [max, min];
+  mode = Math.min(max, Math.max(min, mode));
+  if (Math.abs(max - min) < 0.000001) return min;
+  const pivot = (mode - min) / (max - min);
+  const u = Math.random();
+  if (u <= pivot) return min + Math.sqrt(u * (max - min) * (mode - min));
+  return max - Math.sqrt((1 - u) * (max - min) * (max - mode));
+}
+
+function normalizeTriangularInputs(minValue, modeValue, maxValue, fallbackValues) {
+  const defaults = fallbackValues || { min: 0, mode: 0, max: 0 };
+  let min = Number.isFinite(Number(minValue)) ? Number(minValue) : Number(defaults.min);
+  let mode = Number.isFinite(Number(modeValue)) ? Number(modeValue) : Number(defaults.mode);
+  let max = Number.isFinite(Number(maxValue)) ? Number(maxValue) : Number(defaults.max);
+  if (min > max) [min, max] = [max, min];
+  mode = Math.min(max, Math.max(min, mode));
+  return { min, mode, max };
+}
+
+function buildHistogram(values, binCount = 8) {
+  if (!Array.isArray(values) || !values.length) return [];
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+  if (Math.abs(max - min) < 0.000001) {
+    return [{
+      label: `${fmt(Math.round(min))} XOF`,
+      count: values.length,
+      widthPct: 100
+    }];
+  }
+
+  const safeBinCount = Math.max(4, Math.min(12, Math.round(binCount)));
+  const step = (max - min) / safeBinCount;
+  const bins = Array.from({ length: safeBinCount }, (_, index) => ({
+    start: min + (index * step),
+    end: index === safeBinCount - 1 ? max : min + ((index + 1) * step),
+    count: 0
+  }));
+
+  values.forEach((value) => {
+    const rawIndex = step > 0 ? Math.floor((value - min) / step) : 0;
+    const targetIndex = Math.max(0, Math.min(safeBinCount - 1, rawIndex));
+    bins[targetIndex].count += 1;
+  });
+
+  const peak = Math.max(...bins.map((bin) => bin.count), 1);
+  return bins.map((bin) => ({
+    label: `${fmt(Math.round(bin.start))} - ${fmt(Math.round(bin.end))}`,
+    count: bin.count,
+    widthPct: (bin.count / peak) * 100
+  }));
+}
 
 function formatDateValue(value) {
   if (!value) return "";
@@ -1188,6 +1360,16 @@ function sumClosingNetByPrefixes(bal, prefixes) {
   return total > 0 ? total : 0;
 }
 
+function sumClosingCreditNetByPrefixes(bal, prefixes) {
+  let total = 0;
+  Object.keys(bal).forEach((code) => {
+    if (!prefixes.some((prefix) => String(code).startsWith(String(prefix)))) return;
+    const row = bal[code] || {};
+    total += (row.credit || 0) - (row.debit || 0);
+  });
+  return total > 0 ? total : 0;
+}
+
 function getForecastLegalStatus(formeJuridique) {
   const key = normalizeTemplateKey(formeJuridique);
   if (!key) return "SARL (IS)";
@@ -1285,6 +1467,615 @@ function getForecastTemplateSnapshot() {
       startingCash > 0 ? "cash" : ""
     ].filter(Boolean).length
   };
+}
+
+function getMonteCarloBaseScenario() {
+  const bal = computeBalances();
+  const forecast = getForecastTemplateSnapshot();
+  let totalCharges = 0;
+  let depreciationCharge = 0;
+
+  Object.keys(bal).forEach((code) => {
+    const row = bal[code] || {};
+    const movementDebit = (row.debit || 0) - (row.n1d || 0);
+    const movementCredit = (row.credit || 0) - (row.n1c || 0);
+    const chargeAmount = movementDebit - movementCredit;
+    if (chargeAmount <= 0) return;
+
+    if (
+      String(code).startsWith("6")
+      || String(code).startsWith("81")
+      || String(code).startsWith("83")
+      || String(code).startsWith("85")
+      || String(code).startsWith("87")
+      || String(code).startsWith("89")
+    ) {
+      totalCharges += chargeAmount;
+    }
+    if (String(code).startsWith("681") || String(code).startsWith("68")) {
+      depreciationCharge += chargeAmount;
+    }
+  });
+
+  const totalRevenue = roundPositiveAmount(forecast.merchandiseRevenue + forecast.serviceRevenue);
+  const totalSetup = roundPositiveAmount(
+    forecast.intangibleSetup
+    + forecast.realEstateSetup
+    + forecast.worksSetup
+    + forecast.equipmentSetup
+    + forecast.officeEquipmentSetup
+  );
+  const directCosts = roundPositiveAmount(forecast.annualPurchases);
+  const fixedCosts = roundPositiveAmount(Math.max(totalCharges - directCosts, 0));
+  const workingCapitalBase = roundPositiveAmount(
+    forecast.openingStock
+    + sumClosingNetByPrefixes(bal, ["41"])
+    - sumClosingCreditNetByPrefixes(bal, ["40", "42", "43", "44"])
+  );
+  const workingCapitalPct = totalRevenue > 0
+    ? clampNumber(workingCapitalBase / totalRevenue, 0.02, 0.45, 0.08)
+    : 0.08;
+  const grossMargin = totalRevenue > 0
+    ? clampNumber((totalRevenue - directCosts) / totalRevenue, 0.08, 0.92, 0.35)
+    : clampNumber(1 - forecast.purchaseRatio, 0.08, 0.92, 0.35);
+  const depreciation = roundPositiveAmount(
+    depreciationCharge || (totalSetup / Math.max(1, forecast.amortizationYears || 5))
+  );
+  const capex = roundPositiveAmount(
+    Math.max(totalSetup * 0.08, depreciation, totalRevenue * 0.04)
+  );
+  const fallbackRevenue = roundPositiveAmount(Math.max((forecast.startingCash || 0) * 2, 25000000));
+  const revenue = totalRevenue || fallbackRevenue;
+
+  return {
+    revenue,
+    directCosts,
+    totalCharges: roundPositiveAmount(totalCharges),
+    fixedCosts: fixedCosts || roundPositiveAmount(revenue * 0.24),
+    depreciation,
+    capex,
+    workingCapitalBase,
+    workingCapitalPct,
+    grossMargin,
+    taxRate: clampNumber((Number(currentCompanyDetails.tauxIS) || 25) / 100, 0, 0.45, 0.25),
+    openingCash: forecast.startingCash,
+    totalSetup,
+    forecast
+  };
+}
+
+function buildMonteCarloDefaults() {
+  const base = getMonteCarloBaseScenario();
+  return {
+    baseRevenue: base.revenue,
+    baseFixedCosts: roundPositiveAmount(base.fixedCosts),
+    baseDepreciation: roundPositiveAmount(base.depreciation),
+    baseCapex: roundPositiveAmount(base.capex),
+    taxRate: base.taxRate,
+    iterations: 2500,
+    revenueGrowthMin: -0.08,
+    revenueGrowthMode: base.revenue > 0 ? 0.06 : 0.12,
+    revenueGrowthMax: 0.18,
+    grossMarginMin: clampNumber(base.grossMargin - 0.08, 0.05, 0.9, 0.25),
+    grossMarginMode: clampNumber(base.grossMargin, 0.08, 0.92, 0.35),
+    grossMarginMax: clampNumber(base.grossMargin + 0.08, 0.1, 0.98, 0.45),
+    fixedCostMin: 0.92,
+    fixedCostMode: 1,
+    fixedCostMax: 1.16,
+    workingCapitalMin: clampNumber(base.workingCapitalPct * 0.75, 0.01, 0.35, 0.05),
+    workingCapitalMode: clampNumber(base.workingCapitalPct, 0.02, 0.4, 0.08),
+    workingCapitalMax: clampNumber((base.workingCapitalPct * 1.25) + 0.02, 0.03, 0.45, 0.12),
+    capexMin: 0.85,
+    capexMode: 1,
+    capexMax: 1.3
+  };
+}
+
+function sanitizeMonteCarloConfig(config = {}) {
+  const defaults = buildMonteCarloDefaults();
+  const revenueGrowth = normalizeTriangularInputs(
+    config.revenueGrowthMin,
+    config.revenueGrowthMode,
+    config.revenueGrowthMax,
+    {
+      min: defaults.revenueGrowthMin,
+      mode: defaults.revenueGrowthMode,
+      max: defaults.revenueGrowthMax
+    }
+  );
+  const grossMargin = normalizeTriangularInputs(
+    config.grossMarginMin,
+    config.grossMarginMode,
+    config.grossMarginMax,
+    {
+      min: defaults.grossMarginMin,
+      mode: defaults.grossMarginMode,
+      max: defaults.grossMarginMax
+    }
+  );
+  const fixedCost = normalizeTriangularInputs(
+    config.fixedCostMin,
+    config.fixedCostMode,
+    config.fixedCostMax,
+    {
+      min: defaults.fixedCostMin,
+      mode: defaults.fixedCostMode,
+      max: defaults.fixedCostMax
+    }
+  );
+  const workingCapital = normalizeTriangularInputs(
+    config.workingCapitalMin,
+    config.workingCapitalMode,
+    config.workingCapitalMax,
+    {
+      min: defaults.workingCapitalMin,
+      mode: defaults.workingCapitalMode,
+      max: defaults.workingCapitalMax
+    }
+  );
+  const capex = normalizeTriangularInputs(
+    config.capexMin,
+    config.capexMode,
+    config.capexMax,
+    {
+      min: defaults.capexMin,
+      mode: defaults.capexMode,
+      max: defaults.capexMax
+    }
+  );
+
+  return {
+    baseRevenue: roundPositiveAmount(config.baseRevenue ?? defaults.baseRevenue),
+    baseFixedCosts: roundPositiveAmount(config.baseFixedCosts ?? defaults.baseFixedCosts),
+    baseDepreciation: roundPositiveAmount(config.baseDepreciation ?? defaults.baseDepreciation),
+    baseCapex: roundPositiveAmount(config.baseCapex ?? defaults.baseCapex),
+    taxRate: clampNumber(config.taxRate ?? defaults.taxRate, 0, 0.5, defaults.taxRate),
+    iterations: Math.round(clampNumber(config.iterations ?? defaults.iterations, 250, 10000, defaults.iterations)),
+    revenueGrowthMin: clampNumber(revenueGrowth.min, -0.8, 2, defaults.revenueGrowthMin),
+    revenueGrowthMode: clampNumber(revenueGrowth.mode, -0.8, 2, defaults.revenueGrowthMode),
+    revenueGrowthMax: clampNumber(revenueGrowth.max, -0.8, 2, defaults.revenueGrowthMax),
+    grossMarginMin: clampNumber(grossMargin.min, 0.01, 0.98, defaults.grossMarginMin),
+    grossMarginMode: clampNumber(grossMargin.mode, 0.01, 0.98, defaults.grossMarginMode),
+    grossMarginMax: clampNumber(grossMargin.max, 0.01, 0.98, defaults.grossMarginMax),
+    fixedCostMin: clampNumber(fixedCost.min, 0.2, 3, defaults.fixedCostMin),
+    fixedCostMode: clampNumber(fixedCost.mode, 0.2, 3, defaults.fixedCostMode),
+    fixedCostMax: clampNumber(fixedCost.max, 0.2, 3, defaults.fixedCostMax),
+    workingCapitalMin: clampNumber(workingCapital.min, 0, 0.8, defaults.workingCapitalMin),
+    workingCapitalMode: clampNumber(workingCapital.mode, 0, 0.8, defaults.workingCapitalMode),
+    workingCapitalMax: clampNumber(workingCapital.max, 0, 0.8, defaults.workingCapitalMax),
+    capexMin: clampNumber(capex.min, 0.1, 4, defaults.capexMin),
+    capexMode: clampNumber(capex.mode, 0.1, 4, defaults.capexMode),
+    capexMax: clampNumber(capex.max, 0.1, 4, defaults.capexMax)
+  };
+}
+
+function getMonteCarloConfig() {
+  return sanitizeMonteCarloConfig(currentCompanyDetails.monteCarloConfig || {});
+}
+
+function saveMonteCarloConfig(config = {}) {
+  currentCompanyDetails.monteCarloConfig = sanitizeMonteCarloConfig(config);
+  saveCompanyData();
+  return currentCompanyDetails.monteCarloConfig;
+}
+
+function getMonteCarloInputDisplayValue(field, config) {
+  const value = config[field];
+  if (!Number.isFinite(Number(value))) return "";
+  if (MONTE_CARLO_PERCENT_FIELDS.has(field)) return (Number(value) * 100).toFixed(2);
+  if (field === "iterations") return String(Math.round(Number(value)));
+  return String(Math.round(Number(value)));
+}
+
+function collectMonteCarloConfigFromForm() {
+  const patch = {};
+  MONTE_CARLO_FIELD_IDS.forEach((field) => {
+    const el = document.getElementById(`mc-${field}`);
+    if (!el) return;
+    const rawValue = el.value;
+    patch[field] = MONTE_CARLO_PERCENT_FIELDS.has(field)
+      ? (Number(rawValue) || 0) / 100
+      : (Number(rawValue) || 0);
+  });
+  return saveMonteCarloConfig({
+    ...getMonteCarloConfig(),
+    ...patch
+  });
+}
+
+function runMonteCarloSimulation() {
+  const config = collectMonteCarloConfigFromForm();
+  if (!config.baseRevenue || config.iterations < 250) {
+    showToast("Renseignez un chiffre d'affaires de base et au moins 250 iterations.", "error");
+    return;
+  }
+
+  const revenues = [];
+  const ebitdas = [];
+  const netIncomes = [];
+  const freeCashFlows = [];
+  const operatingMargins = [];
+  let lossCount = 0;
+  let negativeCashCount = 0;
+
+  for (let i = 0; i < config.iterations; i++) {
+    const growthRate = triangularSample(config.revenueGrowthMin, config.revenueGrowthMode, config.revenueGrowthMax);
+    const grossMargin = triangularSample(config.grossMarginMin, config.grossMarginMode, config.grossMarginMax);
+    const fixedCostFactor = triangularSample(config.fixedCostMin, config.fixedCostMode, config.fixedCostMax);
+    const workingCapitalPct = triangularSample(config.workingCapitalMin, config.workingCapitalMode, config.workingCapitalMax);
+    const capexFactor = triangularSample(config.capexMin, config.capexMode, config.capexMax);
+
+    const revenue = Math.max(0, config.baseRevenue * (1 + growthRate));
+    const grossProfit = revenue * grossMargin;
+    const fixedCosts = config.baseFixedCosts * fixedCostFactor;
+    const ebitda = grossProfit - fixedCosts;
+    const ebit = ebitda - config.baseDepreciation;
+    const tax = ebit > 0 ? ebit * config.taxRate : 0;
+    const netIncome = ebit - tax;
+    const freeCashFlow = netIncome + config.baseDepreciation - (config.baseCapex * capexFactor) - (revenue * workingCapitalPct);
+    const operatingMargin = revenue > 0 ? ebitda / revenue : 0;
+
+    revenues.push(revenue);
+    ebitdas.push(ebitda);
+    netIncomes.push(netIncome);
+    freeCashFlows.push(freeCashFlow);
+    operatingMargins.push(operatingMargin);
+    if (netIncome < 0) lossCount += 1;
+    if (freeCashFlow < 0) negativeCashCount += 1;
+  }
+
+  const sortAsc = (values) => [...values].sort((a, b) => a - b);
+  const sortedRevenue = sortAsc(revenues);
+  const sortedEbitda = sortAsc(ebitdas);
+  const sortedNet = sortAsc(netIncomes);
+  const sortedFcf = sortAsc(freeCashFlows);
+  const sortedMargin = sortAsc(operatingMargins);
+
+  currentCompanyDetails.monteCarloLastRun = {
+    generatedAt: new Date().toISOString(),
+    iterations: config.iterations,
+    baseScenario: getMonteCarloBaseScenario(),
+    metrics: {
+      revenue: {
+        p10: percentile(sortedRevenue, 0.10),
+        p50: percentile(sortedRevenue, 0.50),
+        p90: percentile(sortedRevenue, 0.90),
+        average: average(revenues)
+      },
+      ebitda: {
+        p10: percentile(sortedEbitda, 0.10),
+        p50: percentile(sortedEbitda, 0.50),
+        p90: percentile(sortedEbitda, 0.90),
+        average: average(ebitdas)
+      },
+      netIncome: {
+        p10: percentile(sortedNet, 0.10),
+        p50: percentile(sortedNet, 0.50),
+        p90: percentile(sortedNet, 0.90),
+        average: average(netIncomes)
+      },
+      freeCashFlow: {
+        p10: percentile(sortedFcf, 0.10),
+        p50: percentile(sortedFcf, 0.50),
+        p90: percentile(sortedFcf, 0.90),
+        average: average(freeCashFlows)
+      },
+      operatingMargin: {
+        p10: percentile(sortedMargin, 0.10),
+        p50: percentile(sortedMargin, 0.50),
+        p90: percentile(sortedMargin, 0.90),
+        average: average(operatingMargins)
+      }
+    },
+    risk: {
+      lossProbability: lossCount / config.iterations,
+      negativeCashProbability: negativeCashCount / config.iterations,
+      stressedMarginProbability: operatingMargins.filter((margin) => margin < 0.12).length / config.iterations
+    },
+    tails: {
+      worstNetIncome: sortedNet[0],
+      bestNetIncome: sortedNet[sortedNet.length - 1],
+      worstFreeCashFlow: sortedFcf[0],
+      bestFreeCashFlow: sortedFcf[sortedFcf.length - 1]
+    },
+    histogram: buildHistogram(freeCashFlows, 9)
+  };
+  saveCompanyData();
+  render();
+  showToast(`Simulation Monte Carlo terminee (${fmt(config.iterations)} iterations).`, "success");
+}
+
+function applyMonteCarloAccountingBase() {
+  const currentConfig = getMonteCarloConfig();
+  const refreshed = buildMonteCarloDefaults();
+  saveMonteCarloConfig({
+    ...refreshed,
+    iterations: currentConfig.iterations
+  });
+  render();
+  showToast("Hypotheses Monte Carlo recalculees a partir de la comptabilite courante.", "success");
+}
+
+function resetMonteCarloModule() {
+  currentCompanyDetails.monteCarloConfig = sanitizeMonteCarloConfig({});
+  delete currentCompanyDetails.monteCarloLastRun;
+  saveCompanyData();
+  render();
+  showToast("Module Monte Carlo reinitialise.", "info");
+}
+
+function normalizeCostReductionRow(row = {}, index = 0) {
+  const pillar = COST_REDUCTION_PILLARS.find((item) => item.key === row.pillar) ? row.pillar : "optimisation";
+  const status = COST_REDUCTION_STATUS_OPTIONS.includes(row.status) ? row.status : "A etudier";
+  return {
+    id: String(row.id || `cost-${index + 1}`),
+    technique: String(row.technique || "").trim(),
+    pillar,
+    classes: String(row.classes || "").trim(),
+    estimatedGain: roundPositiveAmount(row.estimatedGain),
+    status,
+    owner: String(row.owner || "").trim(),
+    action: String(row.action || "").trim(),
+    targetRate: clampNumber(row.targetRate, 0.01, 0.3, 0.03),
+    recommendedPrefixes: Array.isArray(row.recommendedPrefixes)
+      ? row.recommendedPrefixes.map((prefix) => String(prefix))
+      : []
+  };
+}
+
+function createDefaultCostReductionPlan() {
+  return [
+    {
+      id: "cost-1",
+      technique: "Regrouper les achats et renegocier les volumes",
+      pillar: "combinaison",
+      classes: "60 / 61",
+      estimatedGain: 0,
+      status: "Priorite 30 jours",
+      owner: "Direction achats",
+      action: "Consolider les fournisseurs et lancer une renegociation cadre.",
+      targetRate: 0.05,
+      recommendedPrefixes: ["60", "61"]
+    },
+    {
+      id: "cost-2",
+      technique: "Mettre en concurrence les fournisseurs critiques",
+      pillar: "adaptation",
+      classes: "60 / 62",
+      estimatedGain: 0,
+      status: "A etudier",
+      owner: "Achats / DAF",
+      action: "Organiser un appel d'offres et standardiser les cahiers des charges.",
+      targetRate: 0.04,
+      recommendedPrefixes: ["60", "62"]
+    },
+    {
+      id: "cost-3",
+      technique: "Analyser les couts par activite (ABC)",
+      pillar: "optimisation",
+      classes: "61 / 62 / 65",
+      estimatedGain: 0,
+      status: "A etudier",
+      owner: "Controle de gestion",
+      action: "Identifier les activites a faible marge et supprimer les taches non utiles.",
+      targetRate: 0.03,
+      recommendedPrefixes: ["61", "62", "65"]
+    },
+    {
+      id: "cost-4",
+      technique: "Automatiser les taches repetitives (low-code / RPA)",
+      pillar: "optimisation",
+      classes: "62 / 65",
+      estimatedGain: 0,
+      status: "A etudier",
+      owner: "Finance / SI",
+      action: "Cibler la saisie, les rapprochements et les validations manuelles.",
+      targetRate: 0.04,
+      recommendedPrefixes: ["62", "65"]
+    },
+    {
+      id: "cost-5",
+      technique: "Externaliser selectivement les activites non coeur",
+      pillar: "substitution",
+      classes: "62 / 64 / 65",
+      estimatedGain: 0,
+      status: "A etudier",
+      owner: "Direction generale",
+      action: "Comparer le cout interne complet avec une prestation encadree.",
+      targetRate: 0.05,
+      recommendedPrefixes: ["62", "64", "65"]
+    },
+    {
+      id: "cost-6",
+      technique: "Revoir voyages, carburant et missions",
+      pillar: "elimination",
+      classes: "61 / 62",
+      estimatedGain: 0,
+      status: "Priorite 30 jours",
+      owner: "Moyens generaux",
+      action: "Fixer des plafonds, mutualiser les deplacements et suivre les ecarts.",
+      targetRate: 0.06,
+      recommendedPrefixes: ["61", "62"]
+    },
+    {
+      id: "cost-7",
+      technique: "Rationaliser les systemes herites et abonnements",
+      pillar: "elimination",
+      classes: "62 / 65",
+      estimatedGain: 0,
+      status: "A etudier",
+      owner: "SI",
+      action: "Supprimer les licences inactives et fusionner les outils redondants.",
+      targetRate: 0.08,
+      recommendedPrefixes: ["62", "65"]
+    },
+    {
+      id: "cost-8",
+      technique: "Reaffecter les equipes et actifs sous-utilises",
+      pillar: "reaffectation",
+      classes: "64 / 65",
+      estimatedGain: 0,
+      status: "A etudier",
+      owner: "RH / Operations",
+      action: "Rediriger les capacites libres avant tout nouvel engagement de depense.",
+      targetRate: 0.04,
+      recommendedPrefixes: ["64", "65"]
+    },
+    {
+      id: "cost-9",
+      technique: "Conception a cout et reduction des rebuts",
+      pillar: "adaptation",
+      classes: "60 / 61 / 62",
+      estimatedGain: 0,
+      status: "A etudier",
+      owner: "Production",
+      action: "Repenser les standards de production pour reduire la non-qualite.",
+      targetRate: 0.05,
+      recommendedPrefixes: ["60", "61", "62"]
+    }
+  ].map((row, index) => normalizeCostReductionRow(row, index));
+}
+
+function estimateCostReductionGain(prefixes, targetRate, bal = computeBalances()) {
+  const baseAmount = roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, prefixes, "debit"));
+  return roundPositiveAmount(baseAmount * (Number(targetRate) || 0));
+}
+
+function buildCostReductionPlanFromAccounting() {
+  const bal = computeBalances();
+  return createDefaultCostReductionPlan().map((row, index) => normalizeCostReductionRow({
+    ...row,
+    estimatedGain: estimateCostReductionGain(row.recommendedPrefixes, row.targetRate, bal)
+  }, index));
+}
+
+function getCostReductionPlan() {
+  const rawPlan = Array.isArray(currentCompanyDetails.costReductionPlan) && currentCompanyDetails.costReductionPlan.length
+    ? currentCompanyDetails.costReductionPlan
+    : buildCostReductionPlanFromAccounting();
+  return rawPlan.map((row, index) => normalizeCostReductionRow(row, index));
+}
+
+function saveCostReductionPlan(plan) {
+  currentCompanyDetails.costReductionPlan = plan.map((row, index) => normalizeCostReductionRow(row, index));
+  saveCompanyData();
+  return currentCompanyDetails.costReductionPlan;
+}
+
+function getCostFamilyOpportunities() {
+  const bal = computeBalances();
+  return [
+    {
+      code: "60",
+      label: "Achats et consommables",
+      note: "Marchandises, matieres et consommations directes.",
+      amount: roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["60"], "debit"))
+    },
+    {
+      code: "61-62",
+      label: "Transport et services exterieurs",
+      note: "Prestations, loyers, honoraires, maintenance.",
+      amount: roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["61", "62"], "debit"))
+    },
+    {
+      code: "63",
+      label: "Impots et taxes",
+      note: "Taxes non recuperables et versements assimiles.",
+      amount: roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["63"], "debit"))
+    },
+    {
+      code: "661-663",
+      label: "Personnel",
+      note: "Salaires, indemnites et charges liees.",
+      amount: roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["661", "662", "663"], "debit"))
+    },
+    {
+      code: "64-65",
+      label: "Autres charges de structure",
+      note: "Charges d'exploitation et frais divers.",
+      amount: roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["64", "65"], "debit"))
+    },
+    {
+      code: "67",
+      label: "Charges exceptionnelles",
+      note: "Depenses non recurrentes a surveiller.",
+      amount: roundPositiveAmount(sumCurrentMovementsByPrefixes(bal, ["67"], "debit"))
+    }
+  ].sort((a, b) => b.amount - a.amount);
+}
+
+function getCostReductionSnapshot() {
+  const plan = getCostReductionPlan();
+  const opportunities = getCostFamilyOpportunities();
+  const totalPotential = plan.reduce((sum, row) => sum + (Number(row.estimatedGain) || 0), 0);
+  const totalCharges = opportunities.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+
+  return {
+    plan,
+    opportunities,
+    totalPotential,
+    totalCharges,
+    coverageRate: totalCharges > 0 ? totalPotential / totalCharges : 0,
+    implementedCount: plan.filter((row) => row.status === "Appliquee").length,
+    inProgressCount: plan.filter((row) => row.status === "En cours" || row.status === "Validee").length,
+    priorityCount: plan.filter((row) => row.status === "Priorite 30 jours").length,
+    topOpportunity: opportunities.find((row) => row.amount > 0) || null
+  };
+}
+
+function collectCostReductionPlanFromForm() {
+  const rows = Array.from(document.querySelectorAll("[data-cost-row]"));
+  if (!rows.length) return getCostReductionPlan();
+
+  return rows.map((row, index) => normalizeCostReductionRow({
+    id: row.dataset.costRow || `cost-${index + 1}`,
+    technique: (row.querySelector('[data-cost-field="technique"]') || {}).value || "",
+    pillar: (row.querySelector('[data-cost-field="pillar"]') || {}).value || "optimisation",
+    classes: (row.querySelector('[data-cost-field="classes"]') || {}).value || "",
+    estimatedGain: (row.querySelector('[data-cost-field="estimatedGain"]') || {}).value || 0,
+    status: (row.querySelector('[data-cost-field="status"]') || {}).value || "A etudier",
+    owner: (row.querySelector('[data-cost-field="owner"]') || {}).value || "",
+    action: (row.querySelector('[data-cost-field="action"]') || {}).value || "",
+    targetRate: Number(row.dataset.targetRate) || 0.03,
+    recommendedPrefixes: JSON.parse(row.dataset.recommendedPrefixes || "[]")
+  }, index));
+}
+
+function saveCostReductionPlanFromForm() {
+  const nextPlan = collectCostReductionPlanFromForm();
+  saveCostReductionPlan(nextPlan);
+  render();
+  showToast("Plan de reduction des couts enregistre.", "success");
+}
+
+function seedCostReductionPlanFromAccounting() {
+  saveCostReductionPlan(buildCostReductionPlanFromAccounting());
+  render();
+  showToast("Plan de reduction des couts recalcule a partir des charges comptables.", "success");
+}
+
+function addCostReductionAction() {
+  const currentPlan = collectCostReductionPlanFromForm();
+  currentPlan.push(normalizeCostReductionRow({
+    id: `cost-${Date.now()}`,
+    technique: "Nouvelle action",
+    pillar: "optimisation",
+    classes: "",
+    estimatedGain: 0,
+    status: "A etudier",
+    owner: "",
+    action: ""
+  }, currentPlan.length));
+  saveCostReductionPlan(currentPlan);
+  render();
+}
+
+function resetCostReductionPlan() {
+  if (!window.confirm("Reinitialiser le plan de reduction des couts avec les suggestions par defaut ?")) return;
+  delete currentCompanyDetails.costReductionPlan;
+  saveCostReductionPlan(buildCostReductionPlanFromAccounting());
+  render();
+  showToast("Plan de reduction des couts reinitialise.", "info");
 }
 
 function populateExactForecastTemplate(workbook) {
@@ -1654,6 +2445,8 @@ function render() {
     case "saisie": main.innerHTML = renderSaisie(); break;
     case "cloture": main.innerHTML = renderCloture(); break;
     case "previsionnel": main.innerHTML = renderPrevisionnel(); break;
+    case "montecarlo": main.innerHTML = renderMonteCarlo(); break;
+    case "couts": main.innerHTML = renderReductionCouts(); break;
     case "dsf": main.innerHTML = renderDSF(); break;
     case "guide": main.innerHTML = renderGuide(); break;
     case "veille": main.innerHTML = renderVeilleOhada(); break;
@@ -1758,7 +2551,7 @@ function renderDashboard() {
       <div class="card-header">
         <div>
           <div class="card-title">Actions rapides</div>
-          <div class="card-subtitle">Acces direct a la cloture, au plan financier et aux exports.</div>
+          <div class="card-subtitle">Acces direct a la cloture, aux simulations et aux exports.</div>
         </div>
       </div>
       <div class="grid-3">
@@ -1771,6 +2564,16 @@ function renderDashboard() {
           <div style="font-weight:700;margin-bottom:8px;">Plan financier</div>
           <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Exportez le modele previsionnel exact rempli avec vos donnees actuelles.</div>
           <button class="btn btn-outline" style="width:100%;" onclick="navigateToTab('previsionnel')">Ouvrir le plan financier</button>
+        </div>
+        <div class="card" style="background:var(--surface2);">
+          <div style="font-weight:700;margin-bottom:8px;">Simulation Monte Carlo</div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Tester la sensibilite du resultat et de la tresorerie sur plusieurs scenarios.</div>
+          <button class="btn btn-outline" style="width:100%;" onclick="navigateToTab('montecarlo')">Ouvrir la simulation</button>
+        </div>
+        <div class="card" style="background:var(--surface2);">
+          <div style="font-weight:700;margin-bottom:8px;">Reduction des couts</div>
+          <div style="font-size:0.84rem;color:var(--muted);margin-bottom:14px;">Transformer les charges OHADA en plan d'actions concret et mesurable.</div>
+          <button class="btn btn-outline" style="width:100%;" onclick="navigateToTab('couts')">Ouvrir le plan d'actions</button>
         </div>
         <div class="card" style="background:var(--surface2);">
           <div style="font-weight:700;margin-bottom:8px;">Declaration DSF</div>
@@ -2805,6 +3608,463 @@ function renderPrevisionnel() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderMonteCarlo() {
+  const config = getMonteCarloConfig();
+  const base = getMonteCarloBaseScenario();
+  const lastRun = currentCompanyDetails.monteCarloLastRun || null;
+  const topCards = lastRun ? [
+    {
+      label: "Resultat net median",
+      value: `${fmt(Math.round(lastRun.metrics.netIncome.p50))} XOF`,
+      note: `P10 ${fmt(Math.round(lastRun.metrics.netIncome.p10))} | P90 ${fmt(Math.round(lastRun.metrics.netIncome.p90))}`,
+      color: lastRun.metrics.netIncome.p50 >= 0 ? "var(--green)" : "var(--red)"
+    },
+    {
+      label: "Free cash-flow median",
+      value: `${fmt(Math.round(lastRun.metrics.freeCashFlow.p50))} XOF`,
+      note: `P10 ${fmt(Math.round(lastRun.metrics.freeCashFlow.p10))} | P90 ${fmt(Math.round(lastRun.metrics.freeCashFlow.p90))}`,
+      color: lastRun.metrics.freeCashFlow.p50 >= 0 ? "var(--green)" : "var(--red)"
+    },
+    {
+      label: "Probabilite de perte",
+      value: fmtPercent(lastRun.risk.lossProbability, 1),
+      note: `Iterations ${fmt(lastRun.iterations)} | lancee le ${formatDateTimeValue(lastRun.generatedAt)}`,
+      color: lastRun.risk.lossProbability <= 0.25 ? "var(--green)" : "var(--orange)"
+    },
+    {
+      label: "Probabilite de cash negatif",
+      value: fmtPercent(lastRun.risk.negativeCashProbability, 1),
+      note: `Marge EBITDA mediane ${fmtPercent(lastRun.metrics.operatingMargin.p50, 1)}`,
+      color: lastRun.risk.negativeCashProbability <= 0.35 ? "var(--green)" : "var(--orange)"
+    }
+  ] : [
+    {
+      label: "CA de base",
+      value: `${fmt(config.baseRevenue)} XOF`,
+      note: "Reference courante utilisee pour la simulation",
+      color: "var(--gold)"
+    },
+    {
+      label: "Charges fixes",
+      value: `${fmt(config.baseFixedCosts)} XOF`,
+      note: "Structure de couts hors cout variable",
+      color: "var(--text)"
+    },
+    {
+      label: "Marge brute de reference",
+      value: fmtPercent(base.grossMargin, 1),
+      note: "Base calculee a partir des ventes et achats",
+      color: "var(--green)"
+    },
+    {
+      label: "BFR cible",
+      value: fmtPercent(base.workingCapitalPct, 1),
+      note: `Tresorerie de depart ${fmt(base.openingCash || 0)} XOF`,
+      color: "var(--cyan)"
+    }
+  ];
+
+  const sourceRows = [
+    ["Chiffre d'affaires de base", fmt(base.revenue), "Comptes 70 / plan financier"],
+    ["Achats directs retenus", fmt(base.directCosts), "Comptes 60"],
+    ["Charges fixes retenues", fmt(base.fixedCosts), "Charges totales hors achats directs"],
+    ["Amortissement annuel", fmt(base.depreciation), "Comptes 68 ou stock d'immobilisations"],
+    ["Capex de reference", fmt(base.capex), "Stock d'actifs + niveau d'investissement"],
+    ["BFR de reference", `${fmt(base.workingCapitalBase)} XOF`, "Stocks + clients - dettes court terme"]
+  ];
+  const percentileRows = lastRun ? [
+    ["Chiffre d'affaires", lastRun.metrics.revenue],
+    ["EBITDA", lastRun.metrics.ebitda],
+    ["Resultat net", lastRun.metrics.netIncome],
+    ["Free cash-flow", lastRun.metrics.freeCashFlow]
+  ] : [];
+
+  function renderInput(field, label, suffix = "") {
+    return `
+      <div class="form-group">
+        <div class="form-label">${label}</div>
+        <input class="form-input" id="mc-${field}" type="number" step="0.01" value="${escapeHtml(getMonteCarloInputDisplayValue(field, config))}" placeholder="0">
+        ${suffix ? `<div class="field-help">${suffix}</div>` : ""}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="stack">
+      <div class="card feature-gradient-card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Simulation Monte Carlo</div>
+            <div class="card-subtitle">Module inspire du raisonnement Crystal Ball pour tester le resultat, la marge et la tresorerie avec plusieurs milliers de scenarios.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-outline" onclick="applyMonteCarloAccountingBase()">Recharger depuis la compta</button>
+            <button class="btn btn-outline" onclick="resetMonteCarloModule()">Reinitialiser</button>
+            <button class="btn btn-gold" onclick="runMonteCarloSimulation()">Lancer la simulation</button>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="card feature-highlight-card">
+            <div class="section-title">Scenario de base</div>
+            <div style="font-size:0.85rem;color:var(--muted);line-height:1.7;">
+              CA de base: <strong>${fmt(base.revenue)}</strong> XOF<br>
+              Charges fixes: <strong>${fmt(base.fixedCosts)}</strong> XOF<br>
+              Capex de reference: <strong>${fmt(base.capex)}</strong> XOF
+            </div>
+          </div>
+          <div class="card feature-highlight-card">
+            <div class="section-title">Structure economique</div>
+            <div style="font-size:0.85rem;color:var(--muted);line-height:1.7;">
+              Marge brute repere: <strong>${fmtPercent(base.grossMargin, 1)}</strong><br>
+              BFR repere: <strong>${fmtPercent(base.workingCapitalPct, 1)}</strong><br>
+              IS retenu: <strong>${fmtPercent(base.taxRate, 1)}</strong>
+            </div>
+          </div>
+          <div class="card feature-highlight-card">
+            <div class="section-title">Usage</div>
+            <div style="font-size:0.85rem;color:var(--muted);line-height:1.7;">
+              1. Ajuster les hypotheses ci-dessous.<br>
+              2. Lancer plusieurs milliers d'iterations.<br>
+              3. Lire les percentiles P10 / P50 / P90 avant de decider.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Hypotheses de simulation</div>
+            <div class="card-subtitle">Toutes les valeurs sont memorisees par entreprise.</div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="stack">
+            <div class="section-title">Base du scenario</div>
+            <div class="grid-2">
+              ${renderInput("baseRevenue", "CA de base (XOF)", "Reference annuelle sur laquelle la simulation se construit.")}
+              ${renderInput("baseFixedCosts", "Charges fixes (XOF)", "Hors cout variable et achats directement lies aux ventes.")}
+              ${renderInput("baseDepreciation", "Amortissements (XOF)", "Impact annuel non cash sur le resultat.")}
+              ${renderInput("baseCapex", "Capex de base (XOF)", "Investissements annuels de maintien ou de croissance.")}
+              ${renderInput("taxRate", "Taux IS (%)", "Le module applique l'impot uniquement en cas de resultat positif.")}
+              ${renderInput("iterations", "Nombre d'iterations", "250 a 10 000 iterations. 2 500 est un bon point de depart.")}
+            </div>
+
+            <div class="section-title">Croissance du chiffre d'affaires (%)</div>
+            <div class="grid-3">
+              ${renderInput("revenueGrowthMin", "Min")}
+              ${renderInput("revenueGrowthMode", "Central")}
+              ${renderInput("revenueGrowthMax", "Max")}
+            </div>
+
+            <div class="section-title">Marge brute (%)</div>
+            <div class="grid-3">
+              ${renderInput("grossMarginMin", "Min")}
+              ${renderInput("grossMarginMode", "Central")}
+              ${renderInput("grossMarginMax", "Max")}
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="section-title">Couts fixes (multiplicateur)</div>
+            <div class="grid-3">
+              ${renderInput("fixedCostMin", "Min", "Exemple 0.92 = -8%")}
+              ${renderInput("fixedCostMode", "Central")}
+              ${renderInput("fixedCostMax", "Max", "Exemple 1.16 = +16%")}
+            </div>
+
+            <div class="section-title">BFR (% du CA)</div>
+            <div class="grid-3">
+              ${renderInput("workingCapitalMin", "Min")}
+              ${renderInput("workingCapitalMode", "Central")}
+              ${renderInput("workingCapitalMax", "Max")}
+            </div>
+
+            <div class="section-title">Capex (multiplicateur)</div>
+            <div class="grid-3">
+              ${renderInput("capexMin", "Min", "Exemple 0.85 = capex allege")}
+              ${renderInput("capexMode", "Central")}
+              ${renderInput("capexMax", "Max", "Exemple 1.30 = programme d'investissement charge")}
+            </div>
+
+            <div class="card feature-highlight-card">
+              <div class="section-title">Sources comptables reprises</div>
+              <div style="overflow-x:auto;">
+                <table class="data-table compact-table">
+                  <thead>
+                    <tr>
+                      <th>Rubrique</th>
+                      <th>Valeur</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${sourceRows.map((row) => `
+                      <tr>
+                        <td>${row[0]}</td>
+                        <td>${row[1]}</td>
+                        <td>${row[2]}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="kpi-grid" style="margin-bottom:0;">
+        ${topCards.map((card) => `
+          <div class="kpi">
+            <div class="kpi-label">${card.label}</div>
+            <div class="kpi-value" style="font-size:1rem;color:${card.color};">${card.value}</div>
+            <div class="kpi-note">${card.note}</div>
+          </div>
+        `).join("")}
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Distribution du free cash-flow</div>
+              <div class="card-subtitle">${lastRun ? "Histogramme des iterations Monte Carlo." : "Lancez une simulation pour obtenir la distribution."}</div>
+            </div>
+          </div>
+          ${lastRun ? `
+            <div class="mc-histogram">
+              ${lastRun.histogram.map((bin) => `
+                <div class="mc-bar-row">
+                  <div class="mc-bar-label">${bin.label}</div>
+                  <div class="mc-bar-track"><span style="width:${bin.widthPct}%;"></span></div>
+                  <div class="mc-bar-value">${fmt(bin.count)}</div>
+                </div>
+              `).join("")}
+            </div>
+            <div class="info-box" style="margin-top:16px;">
+              <strong>Lecture rapide:</strong> plus la masse des iterations se deplace vers la droite, plus la probabilite d'un cash positif augmente. Les queues basses donnent le niveau de stress financier a surveiller.
+            </div>
+          ` : `
+            <div class="info-box">
+              <strong>Aucune simulation lancee pour le moment.</strong><br><br>
+              Chargez les hypotheses, cliquez sur <strong>Lancer la simulation</strong> puis utilisez les percentiles pour tester vos decisions d'investissement, de prix ou de reduction de couts.
+            </div>
+          `}
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Percentiles de sortie</div>
+              <div class="card-subtitle">P10 = prudent, P50 = median, P90 = upside.</div>
+            </div>
+          </div>
+          ${lastRun ? `
+            <div style="overflow-x:auto;">
+              <table class="data-table compact-table">
+                <thead>
+                  <tr>
+                    <th>Indicateur</th>
+                    <th>P10</th>
+                    <th>P50</th>
+                    <th>P90</th>
+                    <th>Moyenne</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${percentileRows.map(([label, metric]) => `
+                    <tr>
+                      <td>${label}</td>
+                      <td>${fmt(Math.round(metric.p10))}</td>
+                      <td>${fmt(Math.round(metric.p50))}</td>
+                      <td>${fmt(Math.round(metric.p90))}</td>
+                      <td>${fmt(Math.round(metric.average))}</td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+            <div class="stack" style="margin-top:16px;">
+              <div class="card feature-highlight-card">
+                <div class="section-title">Risques observes</div>
+                <div style="font-size:0.85rem;color:var(--muted);line-height:1.8;">
+                  Probabilite de perte: <strong>${fmtPercent(lastRun.risk.lossProbability, 1)}</strong><br>
+                  Probabilite de cash negatif: <strong>${fmtPercent(lastRun.risk.negativeCashProbability, 1)}</strong><br>
+                  Probabilite de marge EBITDA sous 12%: <strong>${fmtPercent(lastRun.risk.stressedMarginProbability, 1)}</strong>
+                </div>
+              </div>
+              <div class="card feature-highlight-card">
+                <div class="section-title">Bornes extraites</div>
+                <div style="font-size:0.85rem;color:var(--muted);line-height:1.8;">
+                  Pire resultat net: <strong>${fmt(Math.round(lastRun.tails.worstNetIncome))}</strong> XOF<br>
+                  Meilleur resultat net: <strong>${fmt(Math.round(lastRun.tails.bestNetIncome))}</strong> XOF<br>
+                  Pire free cash-flow: <strong>${fmt(Math.round(lastRun.tails.worstFreeCashFlow))}</strong> XOF
+                </div>
+              </div>
+            </div>
+          ` : `
+            <div class="info-box">
+              <strong>Sorties attendues:</strong><br><br>
+              Le module produit des percentiles sur le chiffre d'affaires, l'EBITDA, le resultat net et le free cash-flow. Cela permet de discuter en comite de direction d'un cas prudent, median et offensif avec un seul dossier comptable.
+            </div>
+          `}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderReductionCouts() {
+  const snapshot = getCostReductionSnapshot();
+  const plan = snapshot.plan;
+  const opportunities = snapshot.opportunities.filter((row) => row.amount > 0).slice(0, 5);
+
+  return `
+    <div class="stack">
+      <div class="card feature-gradient-card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Reduction des couts</div>
+            <div class="card-subtitle">Module de pilotage inspire des techniques de reduction des couts, relie aux familles de charges OHADA et transformable en plan d'actions entreprise.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-outline" onclick="seedCostReductionPlanFromAccounting()">Generer depuis les charges</button>
+            <button class="btn btn-outline" onclick="addCostReductionAction()">Ajouter une action</button>
+            <button class="btn btn-outline" onclick="resetCostReductionPlan()">Reinitialiser</button>
+            <button class="btn btn-gold" onclick="saveCostReductionPlanFromForm()">Enregistrer et recalculer</button>
+          </div>
+        </div>
+        <div class="grid-3">
+          ${COST_REDUCTION_PILLARS.map((pillar) => `
+            <div class="card feature-highlight-card">
+              <div class="section-title">${pillar.title}</div>
+              <div style="font-size:0.84rem;color:var(--muted);line-height:1.7;">${pillar.description}</div>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+
+      <div class="kpi-grid" style="margin-bottom:0;">
+        <div class="kpi">
+          <div class="kpi-label">Potentiel cumule</div>
+          <div class="kpi-value" style="font-size:1rem;color:var(--green);">${fmt(snapshot.totalPotential)}</div>
+          <div class="kpi-note">XOF / an identifies dans le plan d'actions</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Couverture des charges</div>
+          <div class="kpi-value" style="font-size:1rem;color:${snapshot.coverageRate <= 0.2 ? 'var(--green)' : 'var(--orange)'};">${fmtPercent(snapshot.coverageRate, 1)}</div>
+          <div class="kpi-note">${fmt(snapshot.totalCharges)} XOF de charges suivies</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Actions avancees</div>
+          <div class="kpi-value" style="font-size:1rem;">${snapshot.inProgressCount + snapshot.implementedCount}</div>
+          <div class="kpi-note">${snapshot.implementedCount} appliquees | ${snapshot.priorityCount} priorites 30 jours</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Famille dominante</div>
+          <div class="kpi-value" style="font-size:1rem;">${snapshot.topOpportunity ? snapshot.topOpportunity.code : "—"}</div>
+          <div class="kpi-note">${snapshot.topOpportunity ? `${snapshot.topOpportunity.label} · ${fmt(snapshot.topOpportunity.amount)} XOF` : "Aucune charge detectee"}</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Lecture OHADA des charges</div>
+              <div class="card-subtitle">Les plus gros postes actuels donnent vos premiers axes d'action.</div>
+            </div>
+          </div>
+          ${opportunities.length ? `
+            <div class="stack">
+              ${opportunities.map((row) => `
+                <div class="cost-family-row">
+                  <div>
+                    <div class="cost-family-label">${row.code} — ${row.label}</div>
+                    <div class="cost-family-note">${row.note}</div>
+                  </div>
+                  <div class="cost-family-amount">${fmt(row.amount)} XOF</div>
+                </div>
+              `).join("")}
+            </div>
+          ` : `
+            <div class="info-box">
+              Aucune charge significative n'a encore ete lue dans la balance ou le journal. Importez vos soldes puis relancez la generation du plan pour obtenir des gains cibles.
+            </div>
+          `}
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Erreurs a eviter</div>
+              <div class="card-subtitle">A garder visibles pendant le programme d'economies.</div>
+            </div>
+          </div>
+          <div class="stack">
+            ${COST_REDUCTION_ERRORS.map((item) => `
+              <div class="cost-warning-row">${item}</div>
+            `).join("")}
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Plan d'actions reduction des couts</div>
+            <div class="card-subtitle">Editable par entreprise. Les gains sont exprimes en XOF par an.</div>
+          </div>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table cost-plan-table">
+            <thead>
+              <tr>
+                <th>Technique</th>
+                <th>Axe</th>
+                <th>Classes OHADA</th>
+                <th>Gain potentiel</th>
+                <th>Statut</th>
+                <th>Responsable</th>
+                <th>Action prioritaire</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${plan.map((row) => `
+                <tr
+                  data-cost-row="${escapeHtml(row.id)}"
+                  data-target-rate="${row.targetRate}"
+                  data-recommended-prefixes='${escapeHtml(JSON.stringify(row.recommendedPrefixes))}'>
+                  <td><input class="form-input" data-cost-field="technique" value="${escapeHtml(row.technique)}" placeholder="Technique"></td>
+                  <td>
+                    <select class="form-select" data-cost-field="pillar">
+                      ${COST_REDUCTION_PILLARS.map((pillar) => `
+                        <option value="${pillar.key}" ${row.pillar === pillar.key ? "selected" : ""}>${pillar.title}</option>
+                      `).join("")}
+                    </select>
+                  </td>
+                  <td><input class="form-input" data-cost-field="classes" value="${escapeHtml(row.classes)}" placeholder="60 / 62 / 65"></td>
+                  <td><input class="form-input" type="number" data-cost-field="estimatedGain" value="${escapeHtml(String(row.estimatedGain || 0))}" placeholder="0"></td>
+                  <td>
+                    <select class="form-select" data-cost-field="status">
+                      ${COST_REDUCTION_STATUS_OPTIONS.map((status) => `
+                        <option value="${status}" ${row.status === status ? "selected" : ""}>${status}</option>
+                      `).join("")}
+                    </select>
+                  </td>
+                  <td><input class="form-input" data-cost-field="owner" value="${escapeHtml(row.owner)}" placeholder="Responsable"></td>
+                  <td><input class="form-input" data-cost-field="action" value="${escapeHtml(row.action)}" placeholder="Action prioritaire"></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

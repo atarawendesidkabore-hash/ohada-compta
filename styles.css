@@ -267,6 +267,9 @@ a { color: var(--gold); text-decoration: none; }
   .nav-btn { padding: 12px 14px; font-size: 0.9rem; }
   .section-title { font-size: 0.65rem; }
   h3 { font-size: 0.95rem; }
+  .mc-bar-row { grid-template-columns: 1fr; }
+  .cost-family-row { flex-direction: column; }
+  .cost-family-amount { white-space: normal; }
 }
 
 @media (max-width: 480px) {
@@ -415,6 +418,98 @@ a { color: var(--gold); text-decoration: none; }
   transition: color .2s, border-color .2s;
 }
 .btn-logout:hover { color: var(--red); border-color: var(--red); }
+
+
+/* ========== MONTE CARLO / COST REDUCTION ========== */
+.feature-gradient-card {
+  border-color: rgba(200,146,42,0.32);
+  background: linear-gradient(180deg, rgba(200,146,42,0.08), rgba(10,22,40,0.96));
+}
+.feature-highlight-card {
+  background: var(--surface2);
+  border-color: rgba(30,58,95,0.55);
+}
+.field-help {
+  font-size: 0.74rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.compact-table th,
+.compact-table td {
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+.mc-histogram {
+  display: grid;
+  gap: 10px;
+}
+.mc-bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.1fr) minmax(160px, 2fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+.mc-bar-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.mc-bar-track {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(30,58,95,0.45);
+  overflow: hidden;
+}
+.mc-bar-track span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-light));
+}
+.mc-bar-value {
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--text);
+}
+.cost-family-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: var(--surface2);
+  border: 1px solid rgba(30,58,95,0.45);
+  border-radius: var(--radius);
+}
+.cost-family-label {
+  font-weight: 700;
+  color: var(--text);
+}
+.cost-family-note {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.cost-family-amount {
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--gold);
+  white-space: nowrap;
+}
+.cost-warning-row {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,145,0,0.22);
+  background: rgba(255,145,0,0.06);
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+.cost-plan-table .form-input,
+.cost-plan-table .form-select {
+  min-width: 150px;
+}
 
 
 /* ========== COMPANY HEADER (dashboard) ========== */
