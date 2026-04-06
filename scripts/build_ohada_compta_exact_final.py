@@ -38,7 +38,7 @@ UNINSTALL_CMD = INSTALL_PACK_DIR / "UNINSTALL-OHADA-COMPTA-EXACT.cmd"
 UNINSTALL_PS1 = INSTALL_PACK_DIR / "uninstall-ohada-compta-exact.ps1"
 FALLBACK_XLSX = INSTALL_PACK_DIR / "OHADA-COMPTA-EXACT-WEB-LINK.xlsx"
 
-LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260405a"
+LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260406a"
 HOST_WINDOW_TITLE = "OHADA_COMPTA_EDGE_HOST"
 USERFORM_WINDOW_TITLE = "OHADA_COMPTA_WINDOW"
 

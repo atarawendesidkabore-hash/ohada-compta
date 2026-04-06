@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DESKTOP = Path.home() / "OneDrive" / "Desktop"
 
 APP_LABEL = "OHADA COMPTA LITE"
-LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260405a"
+LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260406a"
 
 LOCAL_WORKBOOK = ROOT / "OHADA-COMPTA-LITE-SHAREABLE.xlsm"
 DESKTOP_WORKBOOK = DESKTOP / "OHADA-COMPTA-LITE-SHAREABLE.xlsm"

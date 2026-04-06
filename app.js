@@ -130,6 +130,12 @@ const BF_LIASSE_PACKET_NAME = "BFA Liasse Fiscale Sys Normal SYSCOHADA Révisé 
 const BF_LIASSE_DOWNLOAD_NAME = `${BF_LIASSE_PACKET_NAME}.xlsx`;
 const EXACT_LIASSE_TEMPLATE_PATH = "LIASSE.xlsx";
 const EXACT_LIASSE_DOWNLOAD_NAME = "LIASSE.xlsx";
+const SYCEBNL_ASSOCIATIONS_PACKET_NAME = "ETATS FINANCIERS DES ASSOCIATIONS, ORDRES PROFESSIONNELS, FONDATIONS ET ASSIMILES (SYCEBNL)";
+const SYCEBNL_ASSOCIATIONS_DOWNLOAD_NAME = `${SYCEBNL_ASSOCIATIONS_PACKET_NAME}.xlsx`;
+const SYCEBNL_ASSOCIATIONS_TEMPLATE_PATH = "SYCEBNL_ASSOCIATIONS.xlsx";
+const SYCEBNL_PROJETS_PACKET_NAME = "ETATS FINANCIERS DES PROJETS DE DEVELOPPEMENT ET ASSIMILES (SYCEBNL)";
+const SYCEBNL_PROJETS_DOWNLOAD_NAME = `${SYCEBNL_PROJETS_PACKET_NAME}.xlsx`;
+const SYCEBNL_PROJETS_TEMPLATE_PATH = "SYCEBNL_PROJETS.xlsx";
 const EXACT_FORECAST_TEMPLATE_PATH = "PLAN_FINANCIER_PREVISIONNEL.xlsx";
 const EXACT_FORECAST_DOWNLOAD_NAME = "Modele-Excel-plan-financier-previsionnel-entreprise.xlsx";
 const EXACT_FORECAST_INPUT_SHEET_NAME = "Donn\u00e9es \u00e0 saisir";
@@ -925,8 +931,40 @@ function getBilanSnapshot() {
   };
 }
 
+function getExactFiscalTemplateMeta() {
+  if (currentRef === "sycebnl") {
+    if (sycebnlType === "projets") {
+      return {
+        referential: "sycebnl",
+        entityType: "projets",
+        packetName: SYCEBNL_PROJETS_PACKET_NAME,
+        downloadName: SYCEBNL_PROJETS_DOWNLOAD_NAME,
+        templatePath: SYCEBNL_PROJETS_TEMPLATE_PATH,
+        buttonLabel: "liasse projets SYCEBNL"
+      };
+    }
+    return {
+      referential: "sycebnl",
+      entityType: "associations",
+      packetName: SYCEBNL_ASSOCIATIONS_PACKET_NAME,
+      downloadName: SYCEBNL_ASSOCIATIONS_DOWNLOAD_NAME,
+      templatePath: SYCEBNL_ASSOCIATIONS_TEMPLATE_PATH,
+      buttonLabel: "liasse ONG / associations SYCEBNL"
+    };
+  }
+
+  return {
+    referential: "syscohada",
+    entityType: "syscohada",
+    packetName: BF_LIASSE_PACKET_NAME,
+    downloadName: EXACT_LIASSE_DOWNLOAD_NAME,
+    templatePath: EXACT_LIASSE_TEMPLATE_PATH,
+    buttonLabel: "LIASSE.xlsx"
+  };
+}
+
 function getDsfPacketName() {
-  return currentRef === "sycebnl" ? "Liasse fiscale adaptee EBNL" : BF_LIASSE_PACKET_NAME;
+  return getExactFiscalTemplateMeta().packetName;
 }
 
 function getDsfStatusRows() {
@@ -936,6 +974,20 @@ function getDsfStatusRows() {
   const hasImmos = Object.keys(bal).some((code) => code.startsWith("2") || code.startsWith("28"));
   const hasTiers = Object.keys(bal).some((code) => code.startsWith("4"));
   const profileComplete = isCompanyProfileComplete();
+
+  if (currentRef === "sycebnl") {
+    const isProject = sycebnlType === "projets";
+    return [
+      { code: "SYC-01", label: "Informations generales de l'entite", status: profileComplete ? "Pret" : "En attente", hint: profileComplete ? "L'identification peut etre injectee dans le modele officiel." : "Completez la fiche entreprise avant export." },
+      { code: "SYC-02", label: "Balance N et N-1", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Des soldes sont disponibles pour le classeur exact." : "Importez une balance ou des ecritures." },
+      { code: "SYC-03", label: "Bilan Actif / Passif", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Les etats de situation peuvent etre consolides." : "Aucune balance disponible." },
+      { code: "SYC-04", label: "Compte d'exploitation", status: hasJournal ? "Pret" : hasBalances ? "A completer" : "En attente", hint: hasJournal ? "Les mouvements de gestion sont presents." : "Ajoutez les ecritures de l'exercice." },
+      { code: "SYC-05", label: isProject ? "TER / TRC / TEB" : "TFT", status: hasJournal ? "A completer" : "En attente", hint: isProject ? "Les tableaux ressources / emplois restent a valider." : "Le tableau de flux doit etre revu avant depot." },
+      { code: "SYC-06", label: "Notes annexes", status: hasBalances ? "A completer" : "En attente", hint: "Le modele officiel contient deja les onglets de notes a documenter." },
+      { code: "SYC-07", label: "Informations fiscales et teledeclaration", status: profileComplete ? "A completer" : "En attente", hint: profileComplete ? "Le NES, le regime et le pays peuvent etre injectes." : "Renseignez NIF, pays, regime fiscal et NES." },
+      { code: "SYC-08", label: isProject ? "Etats financiers des projets" : "Etats financiers des associations / ONG", status: hasBalances ? "Pret" : "En attente", hint: isProject ? "Le modele projets SYCEBNL sera utilise." : "Le modele ONG / associations SYCEBNL sera utilise." }
+    ];
+  }
 
   return [
     { code: "DSF-01", label: "Bilan — Systeme normal", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Disponible a partir des soldes charges." : "Chargez une balance ou des ecritures." },
@@ -1302,18 +1354,127 @@ function populateExactLiasseTemplate(workbook) {
   setWorksheetNumber(r2, "AK13", isForeignControlled ? 1 : 0);
 }
 
-async function loadExactLiasseTemplateWorkbook() {
-  const response = await fetch(`${EXACT_LIASSE_TEMPLATE_PATH}?v=20260326`);
-  if (!response.ok) throw new Error(`Template ${EXACT_LIASSE_TEMPLATE_PATH} introuvable (${response.status})`);
+function parsePercentFieldValue(value, mode = "standard") {
+  const raw = String(value ?? "").replace(",", ".").trim();
+  if (!raw) return null;
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return null;
+  if (mode === "small-percent") {
+    if (num > 0.2) return num / 100;
+    return num;
+  }
+  return num > 1 ? num / 100 : num;
+}
+
+function populateExactSycebnlTemplate(workbook) {
+  const acct = getCurrentAccountMeta();
+  const meta = getExactFiscalTemplateMeta();
+  const companyName = getCompanyDisplayName();
+  const countryLabel = (currentCompanyDetails.pays || "Burkina Faso").trim();
+  const countryCode = getCountryCodeForLiasse(countryLabel);
+  const legalFormCode = getLegalFormCodeForLiasse(currentCompanyDetails.formeJuridique || "");
+  const regimeCode = getFiscalRegimeCodeForLiasse(currentCompanyDetails.regimeFiscal || "");
+  const exerciseStart = currentCompanyDetails.exerciceDu || "";
+  const exerciseEnd = currentCompanyDetails.exerciceAu || "";
+  const previousExerciseEnd = getPreviousExerciseEnd(exerciseEnd);
+  const city = guessCityFromAddress(currentCompanyDetails.siegeSocial || "", countryLabel);
+  const phoneCode = getPhoneCountryCode(currentCompanyDetails.tel || "");
+  const companyCountryUpper = countryLabel.toUpperCase();
+  const contactName = currentCompanyDetails.expertComptable || companyName;
+  const contactAddress = currentCompanyDetails.siegeSocial || "";
+  const legalFormLabel = currentCompanyDetails.formeJuridique || (meta.entityType === "projets" ? "Projet de developpement" : "Association");
+  const fiscalRegimeLabel = currentCompanyDetails.regimeFiscal || (meta.entityType === "projets" ? "Exonere" : "Exonere");
+
+  const info = workbook.Sheets["INFORMATIONS GENERALES"];
+  const couverture = workbook.Sheets["COUVERTURE"];
+  const garde = workbook.Sheets["GARDE"];
+  const r1 = workbook.Sheets["FICHE R1"];
+  const r2 = workbook.Sheets["FICHE R2"];
+
+  setWorksheetText(couverture, "F4", companyCountryUpper);
+  setWorksheetText(garde, "B2", companyCountryUpper);
+  setWorksheetText(garde, "D22", companyName);
+  setWorksheetText(garde, "C26", currentCompanyDetails.sigleUsuel || "");
+  setWorksheetText(garde, "C28", currentCompanyDetails.siegeSocial || "");
+  setWorksheetText(garde, "D30", currentCompanyDetails.nif || "");
+  setWorksheetText(garde, "D31", currentCompanyDetails.nes || "");
+  setWorksheetDate(garde, "E17", exerciseEnd);
+
+  setWorksheetDate(r1, "N8", exerciseStart);
+  setWorksheetDate(r1, "S8", exerciseEnd);
+  setWorksheetDate(r1, "H10", exerciseEnd);
+  setWorksheetDate(r1, "H12", previousExerciseEnd);
+  setWorksheetText(r1, "C20", legalFormLabel);
+  setWorksheetText(r1, "Q20", currentCompanyDetails.sigleUsuel || "");
+  setWorksheetText(r1, "C23", currentCompanyDetails.tel || "");
+  setWorksheetText(r1, "E23", currentCompanyDetails.emailCompta || (acct ? acct.email : ""));
+  setWorksheetNumber(r1, "K23", phoneCode);
+  setWorksheetText(r1, "Q23", city);
+  setWorksheetText(r1, "C29", currentCompanyDetails.activitePrincipale || "");
+  setWorksheetText(r1, "C32", [contactName, currentCompanyDetails.tel || "", currentCompanyDetails.emailCompta || (acct ? acct.email : "")].filter(Boolean).join(" | "));
+  setWorksheetText(r1, "C35", contactName);
+  setWorksheetText(r1, "C43", currentCompanyDetails.expertComptable || "");
+
+  setDigitSequence(r2, "Q9", legalFormCode, 2);
+  setDigitSequence(r2, "Q11", regimeCode, 1);
+  setDigitSequence(r2, "Q13", countryCode, 2);
+  setDigitSequence(r2, "Q15", 1, 2);
+  setDigitSequence(r2, "Q17", 0, 2);
+  setDigitSequence(r2, "Q20", new Date(exerciseStart || exerciseEnd || Date.now()).getFullYear(), 4);
+
+  setWorksheetText(info, "E3", currentCompanyDetails.nes || "");
+  setWorksheetText(info, "P53", currentCompanyDetails.nes || "");
+  setWorksheetDate(info, "P9", exerciseStart);
+  setWorksheetDate(info, "U9", exerciseEnd);
+  setWorksheetDate(info, "J11", exerciseEnd);
+  setWorksheetDate(info, "J13", previousExerciseEnd);
+  setWorksheetText(info, "F15", city);
+  setWorksheetText(info, "M15", currentCompanyDetails.rccm || currentCompanyDetails.nif || "");
+  setWorksheetText(info, "E21", companyName);
+  setWorksheetText(info, "L21", currentCompanyDetails.sigleUsuel || companyName);
+  setWorksheetText(info, "E24", currentCompanyDetails.tel || "");
+  setWorksheetText(info, "G24", currentCompanyDetails.emailCompta || (acct ? acct.email : ""));
+  setWorksheetText(info, "K24", countryCode);
+  setWorksheetText(info, "L24", "");
+  setWorksheetText(info, "N24", city);
+  setWorksheetText(info, "E28", currentCompanyDetails.siegeSocial || "");
+  setWorksheetText(info, "E31", currentCompanyDetails.activitePrincipale || "");
+  setWorksheetText(info, "E34", contactName);
+  setWorksheetText(info, "G34", contactAddress);
+  setWorksheetText(info, "K34", currentCompanyDetails.tel || "");
+  setWorksheetText(info, "M34", currentCompanyDetails.emailCompta || (acct ? acct.email : ""));
+  setWorksheetText(info, "U34", currentCompanyDetails.expertComptable ? "EXPERT-COMPTABLE" : "COMPTABILITE");
+  setWorksheetText(info, "E56", "Personne morale");
+  setWorksheetText(info, "G56", legalFormLabel);
+  setWorksheetText(info, "I56", fiscalRegimeLabel);
+  setWorksheetText(info, "J56", countryLabel);
+  setWorksheetText(info, "P56", currentCompanyDetails.nes || "Neant");
+
+  const tauxIS = parsePercentFieldValue(currentCompanyDetails.tauxIS, "standard");
+  const tauxIMF = parsePercentFieldValue(currentCompanyDetails.tauxIMF, "small-percent");
+  const tauxTVA = parsePercentFieldValue(currentCompanyDetails.tauxTVA, "standard");
+  if (tauxIS !== null) setWorksheetNumber(info, "G59", tauxIS);
+  if (tauxIMF !== null) setWorksheetNumber(info, "J59", tauxIMF);
+  if (tauxTVA !== null) setWorksheetNumber(info, "E62", tauxTVA);
+}
+
+async function loadTemplateWorkbook(templatePath, cacheVersion = "20260406a") {
+  const response = await fetch(`${templatePath}?v=${cacheVersion}`);
+  if (!response.ok) throw new Error(`Template ${templatePath} introuvable (${response.status})`);
   const buffer = await response.arrayBuffer();
   return XLSX.read(buffer, { type: "array", cellStyles: true, cellFormula: true });
 }
 
+async function loadExactLiasseTemplateWorkbook() {
+  return loadTemplateWorkbook(EXACT_LIASSE_TEMPLATE_PATH, "20260406a");
+}
+
+async function loadExactSycebnlTemplateWorkbook(templatePath) {
+  return loadTemplateWorkbook(templatePath, "20260406a");
+}
+
 async function loadExactForecastTemplateWorkbook() {
-  const response = await fetch(`${EXACT_FORECAST_TEMPLATE_PATH}?v=20260327`);
-  if (!response.ok) throw new Error(`Template ${EXACT_FORECAST_TEMPLATE_PATH} introuvable (${response.status})`);
-  const buffer = await response.arrayBuffer();
-  return XLSX.read(buffer, { type: "array", cellStyles: true, cellFormula: true });
+  return loadTemplateWorkbook(EXACT_FORECAST_TEMPLATE_PATH, "20260406a");
 }
 
 function clampNumber(value, minValue, maxValue, fallbackValue = 0) {
@@ -2302,31 +2463,36 @@ async function shareGeneratedBfaLiasseFiscale() {
 }
 
 async function buildExactLiasseWorkbook() {
-  if (currentRef !== "syscohada") {
-    throw new Error("Le fichier LIASSE.xlsx est reserve au referentiel SYSCOHADA. Basculez sur SYSCOHADA avant l'export.");
-  }
-
   if (typeof XLSX === "undefined") {
     throw new Error("Librairie Excel non chargee. Verifiez votre connexion.");
   }
 
-  const workbook = await loadExactLiasseTemplateWorkbook();
-  populateExactLiasseTemplate(workbook);
-  return workbook;
+  const templateMeta = getExactFiscalTemplateMeta();
+  let workbook;
+
+  if (templateMeta.referential === "syscohada") {
+    workbook = await loadExactLiasseTemplateWorkbook();
+    populateExactLiasseTemplate(workbook);
+  } else {
+    workbook = await loadExactSycebnlTemplateWorkbook(templateMeta.templatePath);
+    populateExactSycebnlTemplate(workbook);
+  }
+
+  return { workbook, templateMeta };
 }
 
 async function downloadExactLiasseFiscale() {
-  const workbook = await buildExactLiasseWorkbook();
-  XLSX.writeFile(workbook, EXACT_LIASSE_DOWNLOAD_NAME, { bookType: "xlsx", compression: true });
-  showToast(`Le modele exact ${EXACT_LIASSE_DOWNLOAD_NAME} a ete rempli avec succes.`, "success");
+  const { workbook, templateMeta } = await buildExactLiasseWorkbook();
+  XLSX.writeFile(workbook, templateMeta.downloadName, { bookType: "xlsx", compression: true });
+  showToast(`Le modele exact ${templateMeta.downloadName} a ete rempli avec succes.`, "success");
 }
 
 async function shareExactLiasseFiscale() {
-  const workbook = await buildExactLiasseWorkbook();
-  const blob = workbookToBlob(workbook, EXACT_LIASSE_DOWNLOAD_NAME);
-  await shareOrDownloadBlobFile(blob, EXACT_LIASSE_DOWNLOAD_NAME, {
-    title: EXACT_LIASSE_DOWNLOAD_NAME,
-    text: `LIASSE.xlsx preparee depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
+  const { workbook, templateMeta } = await buildExactLiasseWorkbook();
+  const blob = workbookToBlob(workbook, templateMeta.downloadName);
+  await shareOrDownloadBlobFile(blob, templateMeta.downloadName, {
+    title: templateMeta.downloadName,
+    text: `${templateMeta.downloadName} preparee depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
   });
 }
 
@@ -2335,8 +2501,12 @@ async function downloadBfaLiasseFiscale() {
     await downloadExactLiasseFiscale();
   } catch (error) {
     console.warn("Exact template export failed", error);
-    showToast("Modele LIASSE.xlsx indisponible. Generation du classeur interne en secours.", "info");
-    downloadGeneratedBfaLiasseFiscale();
+    if (currentRef === "syscohada") {
+      showToast("Modele LIASSE.xlsx indisponible. Generation du classeur interne en secours.", "info");
+      downloadGeneratedBfaLiasseFiscale();
+      return;
+    }
+    showToast(error.message || "Le modele SYCEBNL exact est indisponible.", "error");
   }
 }
 
@@ -2345,8 +2515,12 @@ async function shareBfaLiasseFiscale() {
     await shareExactLiasseFiscale();
   } catch (error) {
     console.warn("Exact template share failed", error);
-    showToast("Modele LIASSE.xlsx indisponible. Partage du classeur interne en secours.", "info");
-    await shareGeneratedBfaLiasseFiscale();
+    if (currentRef === "syscohada") {
+      showToast("Modele LIASSE.xlsx indisponible. Partage du classeur interne en secours.", "info");
+      await shareGeneratedBfaLiasseFiscale();
+      return;
+    }
+    showToast(error.message || "Le modele SYCEBNL exact est indisponible.", "error");
   }
 }
 
@@ -4073,6 +4247,7 @@ function renderReductionCouts() {
 
 function renderDSF() {
   const packetName = getDsfPacketName();
+  const templateMeta = getExactFiscalTemplateMeta();
   const statuses = getDsfStatusRows();
   const readyCount = statuses.filter((item) => item.status === "Pret").length;
 
@@ -4087,16 +4262,20 @@ function renderDSF() {
       <div class="card-header">
         <div>
           <div class="card-title">Declaration Statistique et Fiscale (DSF)</div>
-          <div class="card-subtitle">Remplissage du modele exact LIASSE.xlsx a partir des donnees de l'application.</div>
+          <div class="card-subtitle">Remplissage du modele exact ${templateMeta.downloadName} a partir des donnees de l'application.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-outline" onclick="shareBfaLiasseFiscale()">Partager LIASSE.xlsx</button>
-          <button class="btn btn-gold" onclick="downloadBfaLiasseFiscale()">Telecharger LIASSE.xlsx rempli</button>
+          <button class="btn btn-outline" onclick="shareBfaLiasseFiscale()">Partager ${templateMeta.buttonLabel}</button>
+          <button class="btn btn-gold" onclick="downloadBfaLiasseFiscale()">Telecharger ${templateMeta.buttonLabel}</button>
         </div>
       </div>
       <div class="info-box" style="margin-bottom:16px;">
         <strong>Packet cible:</strong> ${packetName}<br><br>
-        Le telechargement repose desormais sur le modele exact <strong>LIASSE.xlsx</strong> integre au projet. Les champs d'identification et de codification pays/forme/regime sont pre-remplis a partir de vos donnees. Etat d'avancement actuel: <strong>${readyCount}/${statuses.length}</strong> rubriques pretes.
+        Le telechargement repose desormais sur le modele exact <strong>${templateMeta.downloadName}</strong> integre au projet. ${
+          currentRef === "sycebnl"
+            ? `Le choix du modele se fait automatiquement selon le type d'entite SYCEBNL (${sycebnlType === "projets" ? "projets de developpement" : "associations / ONG / fondations"}).`
+            : "Les champs d'identification et de codification pays/forme/regime sont pre-remplis a partir de vos donnees."
+        } Etat d'avancement actuel: <strong>${readyCount}/${statuses.length}</strong> rubriques pretes.
       </div>
       <div class="stack">
         ${statuses.map(d => `
