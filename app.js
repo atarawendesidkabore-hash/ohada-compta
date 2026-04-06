@@ -136,6 +136,8 @@ const SYCEBNL_ASSOCIATIONS_TEMPLATE_PATH = "SYCEBNL_ASSOCIATIONS.xlsx";
 const SYCEBNL_PROJETS_PACKET_NAME = "ETATS FINANCIERS DES PROJETS DE DEVELOPPEMENT ET ASSIMILES (SYCEBNL)";
 const SYCEBNL_PROJETS_DOWNLOAD_NAME = `${SYCEBNL_PROJETS_PACKET_NAME}.xlsx`;
 const SYCEBNL_PROJETS_TEMPLATE_PATH = "SYCEBNL_PROJETS.xlsx";
+const SYCEBNL_BALANCE_START_ROW = 3;
+const SYCEBNL_BALANCE_END_ROW = 2201;
 const EXACT_FORECAST_TEMPLATE_PATH = "PLAN_FINANCIER_PREVISIONNEL.xlsx";
 const EXACT_FORECAST_DOWNLOAD_NAME = "Modele-Excel-plan-financier-previsionnel-entreprise.xlsx";
 const EXACT_FORECAST_INPUT_SHEET_NAME = "Donn\u00e9es \u00e0 saisir";
@@ -1249,6 +1251,19 @@ function setWorksheetDate(sheet, ref, value) {
   sheet[ref] = Object.assign(cell, { t: "n", v: serial, z: cell.z || "dd/mm/yyyy" });
 }
 
+function setWorksheetFormulaNumber(sheet, ref, formula, cachedValue) {
+  if (!sheet || !formula) return;
+  const cell = getWritableCell(sheet[ref]);
+  const nextCell = Object.assign(cell, { t: "n", f: formula });
+  if (cachedValue !== undefined && cachedValue !== null && cachedValue !== "") {
+    const num = Number(cachedValue);
+    if (Number.isFinite(num)) nextCell.v = num;
+  } else {
+    delete nextCell.v;
+  }
+  sheet[ref] = nextCell;
+}
+
 function setDigitSequence(sheet, startRef, rawValue, length) {
   if (!sheet) return;
   const match = /^([A-Z]+)(\d+)$/.exec(startRef);
@@ -1366,6 +1381,100 @@ function parsePercentFieldValue(value, mode = "standard") {
   return num > 1 ? num / 100 : num;
 }
 
+function normalizeSycebnlTemplateAccountCode(rawCode) {
+  return String(rawCode || "").replace(/[^\d]/g, "");
+}
+
+function buildSycebnlBalanceSourceRows(balanceMap = computeBalances()) {
+  const aggregated = new Map();
+
+  Object.keys(balanceMap).forEach((rawCode) => {
+    const code = normalizeSycebnlTemplateAccountCode(rawCode);
+    if (!code) return;
+    const row = balanceMap[rawCode] || {};
+    const target = aggregated.get(code) || { code, n1d: 0, n1c: 0, debit: 0, credit: 0 };
+    target.n1d += Number(row.n1d) || 0;
+    target.n1c += Number(row.n1c) || 0;
+    target.debit += Number(row.debit) || 0;
+    target.credit += Number(row.credit) || 0;
+    aggregated.set(code, target);
+  });
+
+  return Array.from(aggregated.values())
+    .filter((row) => Math.abs(row.n1d) + Math.abs(row.n1c) + Math.abs(row.debit) + Math.abs(row.credit) >= 0.005)
+    .sort((a, b) => a.code.localeCompare(b.code, "fr", { numeric: true }));
+}
+
+function getSycebnlBalanceRowLabel(code, plan = getPlan()) {
+  const account = findAccountByCode(code, plan);
+  if (account && account.libelle) return account.libelle;
+
+  const journalLabel = journalEntries.find(
+    (entry) => normalizeSycebnlTemplateAccountCode(entry.compte) === code && String(entry.libelle || "").trim()
+  );
+  return journalLabel ? String(journalLabel.libelle).trim() : `Compte ${code}`;
+}
+
+function getSycebnlBalanceSheetValues(row, sheetMode) {
+  const openingDebit = Math.max(0, Number(row.n1d) || 0);
+  const openingCredit = Math.max(0, Number(row.n1c) || 0);
+  const movementDebit = Math.max(0, (Number(row.debit) || 0) - openingDebit);
+  const movementCredit = Math.max(0, (Number(row.credit) || 0) - openingCredit);
+
+  if (sheetMode === "n-1") {
+    const priorClosingNet = openingDebit - openingCredit;
+    return {
+      previousDebit: 0,
+      previousCredit: 0,
+      movementDebit: openingDebit,
+      movementCredit: openingCredit,
+      closingDebit: priorClosingNet > 0 ? priorClosingNet : 0,
+      closingCredit: priorClosingNet < 0 ? Math.abs(priorClosingNet) : 0
+    };
+  }
+
+  const closingNet = (Number(row.debit) || 0) - (Number(row.credit) || 0);
+  return {
+    previousDebit: openingDebit,
+    previousCredit: openingCredit,
+    movementDebit,
+    movementCredit,
+    closingDebit: closingNet > 0 ? closingNet : 0,
+    closingCredit: closingNet < 0 ? Math.abs(closingNet) : 0
+  };
+}
+
+function populateSycebnlBalanceSheet(sheet, rows, sheetMode, plan = getPlan()) {
+  if (!sheet) return;
+  const capacity = SYCEBNL_BALANCE_END_ROW - SYCEBNL_BALANCE_START_ROW + 1;
+  if (rows.length > capacity) {
+    throw new Error(`Le modele SYCEBNL accepte au maximum ${capacity} comptes detailles. Veuillez reduire les comptes actifs avant export.`);
+  }
+
+  rows.forEach((row, index) => {
+    const excelRow = SYCEBNL_BALANCE_START_ROW + index;
+    const refs = getSycebnlBalanceSheetValues(row, sheetMode);
+    const closingDebitFormula = `MAX((K${excelRow}+M${excelRow})-(L${excelRow}+N${excelRow}),0)`;
+    const closingCreditFormula = `MAX((L${excelRow}+N${excelRow})-(K${excelRow}+M${excelRow}),0)`;
+
+    setWorksheetText(sheet, `I${excelRow}`, row.code);
+    setWorksheetText(sheet, `J${excelRow}`, getSycebnlBalanceRowLabel(row.code, plan));
+    if (refs.previousDebit) setWorksheetNumber(sheet, `K${excelRow}`, refs.previousDebit);
+    if (refs.previousCredit) setWorksheetNumber(sheet, `L${excelRow}`, refs.previousCredit);
+    if (refs.movementDebit) setWorksheetNumber(sheet, `M${excelRow}`, refs.movementDebit);
+    if (refs.movementCredit) setWorksheetNumber(sheet, `N${excelRow}`, refs.movementCredit);
+    setWorksheetFormulaNumber(sheet, `O${excelRow}`, closingDebitFormula, refs.closingDebit);
+    setWorksheetFormulaNumber(sheet, `P${excelRow}`, closingCreditFormula, refs.closingCredit);
+  });
+}
+
+function populateSycebnlBalanceWorksheets(workbook) {
+  const rows = buildSycebnlBalanceSourceRows();
+  const plan = getPlan();
+  populateSycebnlBalanceSheet(workbook.Sheets["Balance N"], rows, "n", plan);
+  populateSycebnlBalanceSheet(workbook.Sheets["Balance N-1"], rows, "n-1", plan);
+}
+
 function populateExactSycebnlTemplate(workbook) {
   const acct = getCurrentAccountMeta();
   const meta = getExactFiscalTemplateMeta();
@@ -1456,9 +1565,11 @@ function populateExactSycebnlTemplate(workbook) {
   if (tauxIS !== null) setWorksheetNumber(info, "G59", tauxIS);
   if (tauxIMF !== null) setWorksheetNumber(info, "J59", tauxIMF);
   if (tauxTVA !== null) setWorksheetNumber(info, "E62", tauxTVA);
+
+  populateSycebnlBalanceWorksheets(workbook);
 }
 
-async function loadTemplateWorkbook(templatePath, cacheVersion = "20260406a") {
+async function loadTemplateWorkbook(templatePath, cacheVersion = "20260406b") {
   const response = await fetch(`${templatePath}?v=${cacheVersion}`);
   if (!response.ok) throw new Error(`Template ${templatePath} introuvable (${response.status})`);
   const buffer = await response.arrayBuffer();
@@ -1466,15 +1577,15 @@ async function loadTemplateWorkbook(templatePath, cacheVersion = "20260406a") {
 }
 
 async function loadExactLiasseTemplateWorkbook() {
-  return loadTemplateWorkbook(EXACT_LIASSE_TEMPLATE_PATH, "20260406a");
+  return loadTemplateWorkbook(EXACT_LIASSE_TEMPLATE_PATH, "20260406b");
 }
 
 async function loadExactSycebnlTemplateWorkbook(templatePath) {
-  return loadTemplateWorkbook(templatePath, "20260406a");
+  return loadTemplateWorkbook(templatePath, "20260406b");
 }
 
 async function loadExactForecastTemplateWorkbook() {
-  return loadTemplateWorkbook(EXACT_FORECAST_TEMPLATE_PATH, "20260406a");
+  return loadTemplateWorkbook(EXACT_FORECAST_TEMPLATE_PATH, "20260406b");
 }
 
 function clampNumber(value, minValue, maxValue, fallbackValue = 0) {
