@@ -4013,6 +4013,8 @@ function renderCloture() {
 // ═══════════════════════════════════════════════════════════
 function renderPrevisionnel() {
   const snapshot = getForecastTemplateSnapshot();
+  const monteCarloBase = getMonteCarloBaseScenario();
+  const lastMonteCarloRun = currentCompanyDetails.monteCarloLastRun || null;
   const projectName = snapshot.projectName || "Projet OHADA Compta";
   const totalRevenue = snapshot.merchandiseRevenue + snapshot.serviceRevenue;
   const totalSetup = snapshot.intangibleSetup + snapshot.realEstateSetup + snapshot.worksSetup + snapshot.equipmentSetup + snapshot.officeEquipmentSetup;
@@ -4020,6 +4022,7 @@ function renderPrevisionnel() {
   const projectedYear3Revenue = Math.round(projectedYear2Revenue * (1 + snapshot.growthYear3));
   const profileReady = isCompanyProfileComplete();
   const accountingReady = totalRevenue > 0 || totalSetup > 0 || snapshot.startingCash > 0 || snapshot.openingStock > 0;
+  const monteCarloReady = accountingReady && snapshot.assumptionsCount >= 4;
   const checklist = [
     {
       label: "Fiche entreprise",
@@ -4035,6 +4038,21 @@ function renderPrevisionnel() {
       label: "Hypotheses exportables",
       ready: snapshot.assumptionsCount >= 4,
       hint: snapshot.assumptionsCount >= 4 ? "Le modele peut etre pre-rempli avec une base utile." : "Renseignez plus de donnees pour un export plus riche."
+    }
+  ];
+  const workflowSteps = [
+    {
+      label: "Etape 1",
+      title: "Plan financier",
+      detail: "Formaliser les hypotheses commerciales, les investissements de depart et les sorties Excel.",
+      active: true
+    },
+    {
+      label: "Etape 2",
+      title: "Simulation Monte Carlo",
+      detail: monteCarloReady
+        ? "Le module peut deja reprendre les hypotheses du plan financier pour tester les cas prudent, median et offensif."
+        : "Completez encore quelques hypotheses pour lancer une simulation fiable."
     }
   ];
   const totals = [
@@ -4063,14 +4081,29 @@ function renderPrevisionnel() {
       <div class="card" style="border-color:rgba(200,146,42,0.32);background:linear-gradient(180deg, rgba(200,146,42,0.08), rgba(10,22,40,0.96));">
         <div class="card-header">
           <div>
-            <div class="card-title">Plan financier previsionnel</div>
-            <div class="card-subtitle">Module distinct du tableau de bord pour preparer puis exporter ${EXACT_FORECAST_DOWNLOAD_NAME}.</div>
+            <div class="card-title">Plan financier previsionnel — Etape 1</div>
+            <div class="card-subtitle">Premiere etape du pilotage financier avant la simulation Monte Carlo et l'export ${EXACT_FORECAST_DOWNLOAD_NAME}.</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-outline" onclick="navigateToTab('parametres')">Completer la fiche</button>
             <button class="btn btn-outline" onclick="navigateToTab('balance')">Verifier la balance</button>
+            <button class="btn btn-outline" onclick="navigateToTab('montecarlo')">Continuer vers Monte Carlo</button>
             <button class="btn btn-gold" onclick="downloadForecastWorkbook()">Telecharger le modele rempli</button>
           </div>
+        </div>
+        <div class="grid-2" style="margin-bottom:16px;">
+          ${workflowSteps.map((step) => `
+            <div class="card" style="background:${step.active ? "rgba(200,146,42,0.12)" : "var(--surface2)"};border-color:${step.active ? "rgba(200,146,42,0.36)" : "var(--border)"};padding:16px;">
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <div>
+                  <div style="font-size:0.72rem;font-weight:700;color:${step.active ? "var(--gold)" : "var(--cyan)"};letter-spacing:0.08em;text-transform:uppercase;">${step.label}</div>
+                  <div style="font-weight:700;margin-top:8px;">${step.title}</div>
+                </div>
+                <div style="font-size:0.76rem;font-weight:700;color:${step.active ? "var(--gold)" : (monteCarloReady ? "var(--green)" : "var(--orange)")};">${step.active ? "En cours" : (monteCarloReady ? "Pret" : "A preparer")}</div>
+              </div>
+              <div style="margin-top:10px;font-size:0.84rem;color:var(--muted);line-height:1.6;">${step.detail}</div>
+            </div>
+          `).join("")}
         </div>
         <div class="grid-3">
           ${checklist.map((item) => `
@@ -4109,12 +4142,15 @@ function renderPrevisionnel() {
           </div>
         </div>
         <div class="card" style="background:var(--surface2);">
-          <div class="section-title">Actions du module</div>
+          <div class="section-title">Etape suivante — Monte Carlo</div>
           <div style="font-size:0.85rem;color:var(--muted);line-height:1.8;">
             1. Ce module collecte les hypotheses a partir de vos soldes et de la fiche entreprise.<br>
-            2. Il prepare le fichier exact <strong>${EXACT_FORECAST_DOWNLOAD_NAME}</strong>.<br>
+            2. La simulation Monte Carlo reprend automatiquement le <strong>CA</strong>, les <strong>achats</strong>, le <strong>cash de depart</strong>, le <strong>BFR</strong> et le <strong>capex</strong> du plan financier.<br>
             3. Le classeur exporte reste modifiable dans Excel apres telechargement.<br><br>
-            <button class="btn btn-outline" onclick="shareForecastWorkbook()">Partager le modele</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-outline" onclick="shareForecastWorkbook()">Partager le modele</button>
+              <button class="btn ${monteCarloReady ? "btn-gold" : "btn-outline"}" onclick="navigateToTab('montecarlo')">${monteCarloReady ? "Lancer l'etape 2" : "Preparer l'etape 2"}</button>
+            </div>
           </div>
         </div>
       </div>
@@ -4183,7 +4219,7 @@ function renderPrevisionnel() {
           <div class="card-header">
             <div>
               <div class="card-title">Controle avant export</div>
-              <div class="card-subtitle">Ce qu'il faut verifier avant de partager le fichier.</div>
+              <div class="card-subtitle">Ce qu'il faut verifier avant l'export et avant la simulation de scenarios.</div>
             </div>
           </div>
           <div class="stack">
@@ -4199,6 +4235,13 @@ function renderPrevisionnel() {
                 Besoin de lancement estime: <strong>${fmt(totalSetup + snapshot.startingCash + snapshot.openingStock)}</strong> XOF
               </div>
             </div>
+            <div class="card" style="background:var(--surface2);">
+              <div style="font-size:0.84rem;color:var(--muted);line-height:1.8;">
+                Simulation Monte Carlo: <strong>${monteCarloReady ? "prete a partir du plan financier" : "encore incomplete"}</strong><br>
+                Base CA reprise: <strong>${fmt(monteCarloBase.revenue)}</strong> XOF<br>
+                Dernier run: <strong>${lastMonteCarloRun ? formatDateTimeValue(lastMonteCarloRun.generatedAt) : "aucun"}</strong>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -4209,7 +4252,17 @@ function renderPrevisionnel() {
 function renderMonteCarlo() {
   const config = getMonteCarloConfig();
   const base = getMonteCarloBaseScenario();
+  const forecast = getForecastTemplateSnapshot();
   const lastRun = currentCompanyDetails.monteCarloLastRun || null;
+  const totalForecastRevenue = forecast.merchandiseRevenue + forecast.serviceRevenue;
+  const monteCarloBridgeRows = [
+    ["Chiffre d'affaires plan financier", fmt(totalForecastRevenue), "Plan financier previsionnel"],
+    ["Achats annuels repris", fmt(forecast.annualPurchases), "Plan financier / comptes 60"],
+    ["Tresorerie de depart", fmt(forecast.startingCash), "Plan financier"],
+    ["Stock de depart", fmt(forecast.openingStock), "Plan financier / balance"],
+    ["Investissements initiaux", fmt(base.totalSetup), "Plan financier"],
+    ["Base de simulation chargee", fmt(config.baseRevenue), "Parametres Monte Carlo"]
+  ];
   const topCards = lastRun ? [
     {
       label: "Resultat net median",
@@ -4292,14 +4345,18 @@ function renderMonteCarlo() {
       <div class="card feature-gradient-card">
         <div class="card-header">
           <div>
-            <div class="card-title">Simulation Monte Carlo</div>
-            <div class="card-subtitle">Module inspire du raisonnement Crystal Ball pour tester le resultat, la marge et la tresorerie avec plusieurs milliers de scenarios.</div>
+            <div class="card-title">Simulation Monte Carlo — Etape 2 du plan financier</div>
+            <div class="card-subtitle">Continuation directe du plan financier pour tester le resultat, la marge et la tresorerie avec plusieurs milliers de scenarios.</div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="btn btn-outline" onclick="applyMonteCarloAccountingBase()">Recharger depuis la compta</button>
+            <button class="btn btn-outline" onclick="navigateToTab('previsionnel')">Retour au plan financier</button>
+            <button class="btn btn-outline" onclick="applyMonteCarloAccountingBase()">Recharger depuis le plan financier</button>
             <button class="btn btn-outline" onclick="resetMonteCarloModule()">Reinitialiser</button>
             <button class="btn btn-gold" onclick="runMonteCarloSimulation()">Lancer la simulation</button>
           </div>
+        </div>
+        <div class="info-box" style="margin-bottom:16px;">
+          Cette simulation n'est plus un module isole: elle part du <strong>plan financier previsionnel</strong>, puis transforme ses hypotheses en scenarios prudent / median / offensif. Toute mise a jour du plan financier peut etre rechargee ici en un clic.
         </div>
         <div class="grid-3">
           <div class="card feature-highlight-card">
@@ -4319,11 +4376,11 @@ function renderMonteCarlo() {
             </div>
           </div>
           <div class="card feature-highlight-card">
-            <div class="section-title">Usage</div>
+            <div class="section-title">Workflow</div>
             <div style="font-size:0.85rem;color:var(--muted);line-height:1.7;">
-              1. Ajuster les hypotheses ci-dessous.<br>
-              2. Lancer plusieurs milliers d'iterations.<br>
-              3. Lire les percentiles P10 / P50 / P90 avant de decider.
+              1. Finaliser le plan financier.<br>
+              2. Recharger les hypotheses ici.<br>
+              3. Lancer plusieurs milliers d'iterations puis lire P10 / P50 / P90.
             </div>
           </div>
         </div>
@@ -4386,7 +4443,7 @@ function renderMonteCarlo() {
             </div>
 
             <div class="card feature-highlight-card">
-              <div class="section-title">Sources comptables reprises</div>
+              <div class="section-title">Pont avec le plan financier</div>
               <div style="overflow-x:auto;">
                 <table class="data-table compact-table">
                   <thead>
@@ -4397,6 +4454,13 @@ function renderMonteCarlo() {
                     </tr>
                   </thead>
                   <tbody>
+                    ${monteCarloBridgeRows.map((row) => `
+                      <tr>
+                        <td>${row[0]}</td>
+                        <td>${row[1]}</td>
+                        <td>${row[2]}</td>
+                      </tr>
+                    `).join("")}
                     ${sourceRows.map((row) => `
                       <tr>
                         <td>${row[0]}</td>
