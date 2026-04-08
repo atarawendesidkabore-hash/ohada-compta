@@ -23,7 +23,7 @@ DEFAULT_OUTPUT = ROOT / "OHADA-COMPTA-EXACT.xlsm"
 DEFAULT_DESKTOP_DIR = Path.home() / "OneDrive" / "Desktop" / "OHADA-COMPTA-EXACT"
 DEFAULT_DESKTOP_OUTPUT = DEFAULT_DESKTOP_DIR / "OHADA-COMPTA-EXACT.xlsm"
 
-LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260406a"
+LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260408a"
 USERDATA_PATH = str((Path.home() / "AppData" / "Local" / "OHADA-Compta" / "WebView2" / "UserData").resolve())
 EDGE_HOST_FILE = "ohada-edge-host.html"
 EDGE_HOST_HTML = f"""<!doctype html>

@@ -1569,7 +1569,7 @@ function populateExactSycebnlTemplate(workbook) {
   populateSycebnlBalanceWorksheets(workbook);
 }
 
-async function loadTemplateWorkbook(templatePath, cacheVersion = "20260406b") {
+async function loadTemplateWorkbook(templatePath, cacheVersion = "20260408a") {
   const response = await fetch(`${templatePath}?v=${cacheVersion}`);
   if (!response.ok) throw new Error(`Template ${templatePath} introuvable (${response.status})`);
   const buffer = await response.arrayBuffer();
@@ -1577,15 +1577,15 @@ async function loadTemplateWorkbook(templatePath, cacheVersion = "20260406b") {
 }
 
 async function loadExactLiasseTemplateWorkbook() {
-  return loadTemplateWorkbook(EXACT_LIASSE_TEMPLATE_PATH, "20260406b");
+  return loadTemplateWorkbook(EXACT_LIASSE_TEMPLATE_PATH, "20260408a");
 }
 
 async function loadExactSycebnlTemplateWorkbook(templatePath) {
-  return loadTemplateWorkbook(templatePath, "20260406b");
+  return loadTemplateWorkbook(templatePath, "20260408a");
 }
 
 async function loadExactForecastTemplateWorkbook() {
-  return loadTemplateWorkbook(EXACT_FORECAST_TEMPLATE_PATH, "20260406b");
+  return loadTemplateWorkbook(EXACT_FORECAST_TEMPLATE_PATH, "20260408a");
 }
 
 function clampNumber(value, minValue, maxValue, fallbackValue = 0) {
@@ -4361,6 +4361,18 @@ function renderDSF() {
   const templateMeta = getExactFiscalTemplateMeta();
   const statuses = getDsfStatusRows();
   const readyCount = statuses.filter((item) => item.status === "Pret").length;
+  const sycebnlSelector = currentRef === "sycebnl"
+    ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+          <button class="btn ${sycebnlType === "associations" ? "btn-gold" : "btn-outline"}" onclick="setSycebnlType('associations')">
+            ONG / Association / Fondation
+          </button>
+          <button class="btn ${sycebnlType === "projets" ? "btn-gold" : "btn-outline"}" onclick="setSycebnlType('projets')">
+            Projet de developpement
+          </button>
+        </div>
+      `
+    : "";
 
   function getStatusColor(status) {
     if (status === "Pret") return "var(--green)";
@@ -4380,6 +4392,7 @@ function renderDSF() {
           <button class="btn btn-gold" onclick="downloadBfaLiasseFiscale()">Telecharger ${templateMeta.buttonLabel}</button>
         </div>
       </div>
+      ${sycebnlSelector}
       <div class="info-box" style="margin-bottom:16px;">
         <strong>Packet cible:</strong> ${packetName}<br><br>
         Le telechargement repose desormais sur le modele exact <strong>${templateMeta.downloadName}</strong> integre au projet. ${

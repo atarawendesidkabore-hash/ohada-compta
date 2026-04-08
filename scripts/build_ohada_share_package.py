@@ -16,7 +16,7 @@ PACKAGE_DIR = DESKTOP / "OHADA-COMPTA-SHARE-PACK"
 PACKAGE_ZIP = DESKTOP / "OHADA-COMPTA-SHARE-PACK.zip"
 FALLBACK_WORKBOOK = PACKAGE_DIR / "OHADA-COMPTA-WEB-LINK.xlsx"
 README_FILE = PACKAGE_DIR / "README-IMPORTANT.txt"
-LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260406a"
+LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260408a"
 
 
 README_TEXT = f"""OHADA COMPTA - PACK DE PARTAGE

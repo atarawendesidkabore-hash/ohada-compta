@@ -14,7 +14,7 @@ TEMPLATE_WORKBOOK = ROOT / "_vendor" / "ExcelWebView2" / "ExcelWebView2.xlsm"
 DEFAULT_OUTPUT = ROOT / "OHADA-COMPTA-EXACT-SHAREABLE.xlsm"
 DEFAULT_DESKTOP_OUTPUT = Path.home() / "OneDrive" / "Desktop" / "OHADA-COMPTA-EXACT-SHAREABLE.xlsm"
 
-LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260406a"
+LIVE_SITE_URL = "https://atarawendesidkabore-hash.github.io/ohada-compta/?v=20260408a"
 HOST_WINDOW_TITLE = "OHADA_COMPTA_EDGE_HOST"
 USERFORM_WINDOW_TITLE = "OHADA_COMPTA_WINDOW"
 
