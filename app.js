@@ -189,6 +189,34 @@ function getReferentialLabel(ref = currentRef) {
   return normalizeReferential(ref) === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise";
 }
 
+function getReferentialExperienceLabel() {
+  if (currentRef === "sycebnl") {
+    return sycebnlType === "projets"
+      ? "Comptabilite SYCEBNL — Projets de developpement"
+      : "Comptabilite SYCEBNL — Associations / ONG / Fondations";
+  }
+  return "Comptabilite SYSCOHADA Revise";
+}
+
+function syncContextualChrome() {
+  const topbarLabel = document.querySelector(".topbar-label");
+  const authSubtitle = document.querySelector(".auth-subtitle");
+  const comparaisonBtn = document.querySelector('.nav-btn[data-tab="comparaison"]');
+
+  if (topbarLabel) topbarLabel.textContent = getReferentialExperienceLabel();
+  if (authSubtitle && !currentCompanyId) authSubtitle.textContent = getReferentialExperienceLabel();
+  if (typeof document !== "undefined") {
+    document.title = `OHADA Compta — ${getReferentialLabel()}${currentRef === "sycebnl" ? ` ${sycebnlType === "projets" ? "Projets" : "Associations"}` : ""}`;
+  }
+  if (comparaisonBtn) {
+    comparaisonBtn.style.display = currentCompanyId ? "none" : "";
+  }
+  if (currentCompanyId && currentTab === "comparaison") {
+    currentTab = "dashboard";
+    updateLocationHashForTab(currentTab);
+  }
+}
+
 function syncReferentielSelect() {
   const sel = document.getElementById("referentiel-select");
   const lockNote = document.getElementById("referentiel-lock-note");
@@ -201,6 +229,7 @@ function syncReferentielSelect() {
       : "Choisissez le systeme comptable.";
   }
   if (lockNote) lockNote.style.display = currentCompanyId ? "inline-block" : "none";
+  syncContextualChrome();
 }
 
 function updateCurrentAccountPreferences(patch = {}) {
@@ -230,7 +259,16 @@ function syncRegisterAccountingSystemUI() {
   const select = document.getElementById("reg-accountingSystem");
   const wrap = document.getElementById("reg-sycebnl-wrap");
   if (!select || !wrap) return;
-  wrap.style.display = normalizeReferential(select.value) === "sycebnl" ? "" : "none";
+  const nextRef = normalizeReferential(select.value);
+  wrap.style.display = nextRef === "sycebnl" ? "" : "none";
+  const nextTypeEl = document.getElementById("reg-sycebnlType");
+  const authSubtitle = document.querySelector(".auth-subtitle");
+  if (authSubtitle) {
+    const previewType = nextTypeEl ? normalizeSycebnlEntityType(nextTypeEl.value) : "associations";
+    authSubtitle.textContent = nextRef === "sycebnl"
+      ? (previewType === "projets" ? "Comptabilite SYCEBNL — Projets de developpement" : "Comptabilite SYCEBNL — Associations / ONG / Fondations")
+      : "Comptabilite SYSCOHADA Revise";
+  }
 }
 
 function syncParamAccountingSystemUI() {
@@ -245,6 +283,11 @@ function bindStaticAuthFormEvents() {
   if (regSystem && !regSystem.dataset.bound) {
     regSystem.addEventListener("change", syncRegisterAccountingSystemUI);
     regSystem.dataset.bound = "1";
+  }
+  const regType = document.getElementById("reg-sycebnlType");
+  if (regType && !regType.dataset.bound) {
+    regType.addEventListener("change", syncRegisterAccountingSystemUI);
+    regType.dataset.bound = "1";
   }
   syncRegisterAccountingSystemUI();
 }
@@ -495,10 +538,112 @@ if (typeof window !== "undefined") {
 
 function getPlan() {
   if (currentRef === "sycebnl") {
-    const base = PLAN_COMPTABLE_SYSCOHADA.filter(a => a.numero !== "13" && a.numero !== "131" && a.numero !== "139");
-    return [...base, ...PLAN_COMPTABLE_SYCEBNL_ADDITIONS, ...PLAN_COMPTABLE_SYCEBNL_CLASSE9].sort((a, b) => a.numero.localeCompare(b.numero));
+    const projectOnlyExclusions = ["454", "744", "745", "91", "92"];
+    const projectOverrides = [
+      { numero: "161", libelle: "Fonds d'administration recus", classe: 1, type: "Bilan", sens: "Credit", sycebnl: true },
+      { numero: "162", libelle: "Financements projets a regulariser", classe: 1, type: "Bilan", sens: "Credit", sycebnl: true },
+      { numero: "163", libelle: "Ressources affectees au projet", classe: 1, type: "Bilan", sens: "Credit", sycebnl: true },
+      { numero: "164", libelle: "Fonds reports sur conventions", classe: 1, type: "Bilan", sens: "Credit", sycebnl: true }
+    ];
+
+    const merged = new Map();
+    [...PLAN_COMPTABLE_SYSCOHADA, ...PLAN_COMPTABLE_SYCEBNL_ADDITIONS, ...(sycebnlType === "projets" ? projectOverrides : []), ...(sycebnlType === "associations" ? PLAN_COMPTABLE_SYCEBNL_CLASSE9 : [])]
+      .forEach((account) => {
+        const existing = merged.get(account.numero) || {};
+        merged.set(account.numero, { ...existing, ...account });
+      });
+
+    return Array.from(merged.values())
+      .filter((account) => !(sycebnlType === "projets" && projectOnlyExclusions.some((prefix) => account.numero.startsWith(prefix))))
+      .sort((a, b) => a.numero.localeCompare(b.numero, "fr", { numeric: true }));
   }
-  return PLAN_COMPTABLE_SYSCOHADA;
+  return [...PLAN_COMPTABLE_SYSCOHADA].sort((a, b) => a.numero.localeCompare(b.numero, "fr", { numeric: true }));
+}
+
+function getSycebnlEntityLabel() {
+  return sycebnlType === "projets" ? "Projets de developpement" : "Associations / ONG / Fondations";
+}
+
+function getResultatLabel() {
+  return currentRef === "sycebnl" && sycebnlType === "projets" ? "Compte d'exploitation" : "Compte de resultat";
+}
+
+function getFluxLabel() {
+  if (currentRef === "sycebnl") {
+    return sycebnlType === "projets" ? "TRC / TER / TEB" : "Tableau de flux de tresorerie (TFT)";
+  }
+  return "Tableau de flux de tresorerie (TFT)";
+}
+
+function getAnnexesLabel() {
+  return currentRef === "sycebnl" && sycebnlType === "projets" ? "Note annexe" : "Notes annexes";
+}
+
+function getTreasurySnapshot() {
+  const bal = computeBalances();
+  let opening = 0;
+  let encaissements = 0;
+  let decaissements = 0;
+  let closing = 0;
+
+  Object.keys(bal).forEach((code) => {
+    if (!code.startsWith("5")) return;
+    const n1d = bal[code].n1d || 0;
+    const n1c = bal[code].n1c || 0;
+    const debit = bal[code].debit || 0;
+    const credit = bal[code].credit || 0;
+    opening += n1d - n1c;
+    encaissements += Math.max(0, debit - n1d);
+    decaissements += Math.max(0, credit - n1c);
+    closing += debit - credit;
+  });
+
+  return {
+    opening,
+    encaissements,
+    decaissements,
+    closing,
+    variation: closing - opening
+  };
+}
+
+function getPeriodNetByPrefixes(prefixes, preferredSens = "credit") {
+  const bal = computeBalances();
+  let total = 0;
+  Object.keys(bal).forEach((code) => {
+    if (!prefixes.some((prefix) => code.startsWith(prefix))) return;
+    const mvtD = (bal[code].debit || 0) - (bal[code].n1d || 0);
+    const mvtC = (bal[code].credit || 0) - (bal[code].n1c || 0);
+    total += preferredSens === "credit" ? mvtC - mvtD : mvtD - mvtC;
+  });
+  return total;
+}
+
+function getProjectFinancialSnapshot() {
+  const treasury = getTreasurySnapshot();
+  const resources = getPeriodNetByPrefixes(["16", "45", "74", "75", "77", "79"], "credit");
+  const emplois = getPeriodNetByPrefixes(["60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "81", "83", "85", "87", "89"], "debit");
+  const available = Math.max(resources, 0);
+  const executed = Math.max(emplois, 0);
+  const executionRate = available > 0 ? executed / available : 0;
+
+  return {
+    treasury,
+    resources: available,
+    emplois: executed,
+    solde: available - executed,
+    executionRate
+  };
+}
+
+function syncDynamicNavigationLabels() {
+  syncContextualChrome();
+  const resultatBtn = document.querySelector('.nav-btn[data-tab="resultat"]');
+  const fluxBtn = document.querySelector('.nav-btn[data-tab="tafire"]');
+  const annexesBtn = document.querySelector('.nav-btn[data-tab="annexes"]');
+  if (resultatBtn) resultatBtn.textContent = getResultatLabel();
+  if (fluxBtn) fluxBtn.textContent = currentRef === "sycebnl" ? (sycebnlType === "projets" ? "TRC / TER / TEB" : "TFT") : "Flux de tresorerie";
+  if (annexesBtn) annexesBtn.textContent = getAnnexesLabel();
 }
 
 function fmt(n) { return n.toLocaleString("fr-FR"); }
@@ -983,9 +1128,9 @@ function getDsfStatusRows() {
       { code: "SYC-01", label: "Informations generales de l'entite", status: profileComplete ? "Pret" : "En attente", hint: profileComplete ? "L'identification peut etre injectee dans le modele officiel." : "Completez la fiche entreprise avant export." },
       { code: "SYC-02", label: "Balance N et N-1", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Des soldes sont disponibles pour le classeur exact." : "Importez une balance ou des ecritures." },
       { code: "SYC-03", label: "Bilan Actif / Passif", status: hasBalances ? "Pret" : "En attente", hint: hasBalances ? "Les etats de situation peuvent etre consolides." : "Aucune balance disponible." },
-      { code: "SYC-04", label: "Compte d'exploitation", status: hasJournal ? "Pret" : hasBalances ? "A completer" : "En attente", hint: hasJournal ? "Les mouvements de gestion sont presents." : "Ajoutez les ecritures de l'exercice." },
-      { code: "SYC-05", label: isProject ? "TER / TRC / TEB" : "TFT", status: hasJournal ? "A completer" : "En attente", hint: isProject ? "Les tableaux ressources / emplois restent a valider." : "Le tableau de flux doit etre revu avant depot." },
-      { code: "SYC-06", label: "Notes annexes", status: hasBalances ? "A completer" : "En attente", hint: "Le modele officiel contient deja les onglets de notes a documenter." },
+      { code: "SYC-04", label: isProject ? "Compte d'exploitation" : "Compte de resultat", status: hasJournal ? "Pret" : hasBalances ? "A completer" : "En attente", hint: hasJournal ? "Les mouvements de gestion sont presents." : "Ajoutez les ecritures de l'exercice." },
+      { code: "SYC-05", label: isProject ? "TRC / TER / TEB" : "TFT", status: hasJournal ? "A completer" : "En attente", hint: isProject ? "La reconciliation de tresorerie, le TER et le tableau budgetaire restent a valider." : "Le tableau de flux doit etre revu avant depot." },
+      { code: "SYC-06", label: isProject ? "Note annexe" : "Notes annexes", status: hasBalances ? "A completer" : "En attente", hint: "Le modele officiel contient deja les onglets de notes a documenter." },
       { code: "SYC-07", label: "Informations fiscales et teledeclaration", status: profileComplete ? "A completer" : "En attente", hint: profileComplete ? "Le NES, le regime et le pays peuvent etre injectes." : "Renseignez NIF, pays, regime fiscal et NES." },
       { code: "SYC-08", label: isProject ? "Etats financiers des projets" : "Etats financiers des associations / ONG", status: hasBalances ? "Pret" : "En attente", hint: isProject ? "Le modele projets SYCEBNL sera utilise." : "Le modele ONG / associations SYCEBNL sera utilise." }
     ];
@@ -2668,22 +2813,38 @@ async function shareForecastWorkbook() {
   }
 }
 
-function buildBalanceTemplateBlob() {
+function buildBalanceTemplateWorkbook() {
+  if (typeof XLSX === "undefined") {
+    throw new Error("Librairie Excel non chargee. Verifiez votre connexion.");
+  }
   const plan = getPlan();
-  let csv = "Compte,Libelle,S.O. Debit,S.O. Credit\n";
+  const rows = [["Compte", "Libelle", "S.O. Debit", "S.O. Credit"]];
   plan.forEach(a => {
     const ob = OPENING_BALANCES[a.numero] || { n1d: 0, n1c: 0 };
-    csv += `"${a.numero}","${a.libelle}",${ob.n1d},${ob.n1c}\n`;
+    rows.push([a.numero, a.libelle, ob.n1d, ob.n1c]);
   });
-  return new Blob([csv], { type: getMimeTypeForFilename("balance_ouverture_template.csv") });
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet["!cols"] = [{ wch: 14 }, { wch: 42 }, { wch: 16 }, { wch: 16 }];
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Balance ouverture");
+  return workbook;
+}
+
+function buildBalanceTemplateBlob() {
+  const workbook = buildBalanceTemplateWorkbook();
+  return workbookToBlob(workbook, "balance_ouverture_template.xlsx");
 }
 
 async function shareBalanceTemplate() {
-  const blob = buildBalanceTemplateBlob();
-  await shareOrDownloadBlobFile(blob, "balance_ouverture_template.csv", {
-    title: "Modele de balance d'ouverture",
-    text: `Modele CSV de balance d'ouverture exporte depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
-  });
+  try {
+    const blob = buildBalanceTemplateBlob();
+    await shareOrDownloadBlobFile(blob, "balance_ouverture_template.xlsx", {
+      title: "Modele Excel de balance d'ouverture",
+      text: `Modele Microsoft Excel de balance d'ouverture exporte depuis OHADA COMPTA pour ${getCompanyDisplayName() || "l'entreprise"}.`
+    });
+  } catch (error) {
+    showToast(error.message || "Impossible de partager le modele Excel de balance d'ouverture.", "error");
+  }
 }
 
 function buildAmortCsvBlob() {
@@ -2715,6 +2876,7 @@ async function shareAmortCsv() {
 // ═══════════════════════════════════════════════════════════
 function render() {
   const main = document.getElementById("main-content");
+  syncDynamicNavigationLabels();
   document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === currentTab));
   switch (currentTab) {
     case "dashboard": main.innerHTML = renderDashboard(); break;
@@ -2910,10 +3072,16 @@ function renderDashboard() {
       <div class="info-box">
         <strong>Referentiel actif: ${refLabel}</strong><br><br>
         ${currentRef === "sycebnl"
-          ? "Le SYCEBNL s'applique aux entites a but non lucratif: associations, ONG, fondations, syndicats. Il inclut des comptes specifiques pour les fonds dedies (classe 1), les donateurs et bailleurs (classe 4), et les dons/contributions (classe 7)."
+          ? (sycebnlType === "projets"
+            ? "Le profil SYCEBNL Projets s'applique aux projets de developpement et assimiles. Il privilegie le bilan, le compte d'exploitation, le TRC, le TER, le TEB et la note annexe."
+            : "Le profil SYCEBNL Associations s'applique aux associations, ONG, fondations et assimiles. Il privilegie le bilan, le compte de resultat, le TFT et les notes annexes.")
           : "Le SYSCOHADA revise s'applique a toutes les entites a but lucratif des 17 Etats membres de l'OHADA. Il est conforme a l'Acte Uniforme AUDCIF et structure en 8 classes de comptes."
         }<br><br>
-        <strong>Etats financiers:</strong> Bilan | Compte de resultat | Tableau de flux de tresorerie (TFT) | Notes annexes<br>
+        <strong>Etats financiers:</strong> ${currentRef === "sycebnl"
+          ? (sycebnlType === "projets"
+            ? "Bilan | Compte d'exploitation | TRC | TER | TEB | Note annexe"
+            : "Bilan | Compte de resultat | Tableau de flux de tresorerie (TFT) | Notes annexes")
+          : "Bilan | Compte de resultat | Tableau de flux de tresorerie (TFT) | Notes annexes"}<br>
         <strong>Pays membres:</strong> ${OHADA_MEMBER_STATES.join(", ")}<br>
         <strong>Choix entreprise:</strong> ce referentiel est maintenant memorise dans la fiche entreprise et dans le compte.
         <div style="margin-top:14px;">
@@ -2929,6 +3097,7 @@ function renderDashboard() {
 // ═══════════════════════════════════════════════════════════
 function renderPlan() {
   const plan = getPlan();
+  const sycebnlSpecialCount = plan.filter((account) => account.sycebnl).length;
   const filtered = plan.filter(a => {
     if (filterClass && a.classe !== filterClass) return false;
     if (searchTerm) {
@@ -2942,10 +3111,17 @@ function renderPlan() {
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">Plan comptable ${currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise"}</div>
-          <div class="card-subtitle">${filtered.length} comptes affiches sur ${plan.length}</div>
+          <div class="card-title">Plan comptable ${currentRef === "sycebnl" ? `SYCEBNL — ${getSycebnlEntityLabel()}` : "SYSCOHADA Revise"}</div>
+          <div class="card-subtitle">${filtered.length} comptes affiches sur ${plan.length}${currentRef === "sycebnl" ? ` | ${sycebnlSpecialCount} comptes adaptes au referentiel` : ""}</div>
         </div>
       </div>
+      ${currentRef === "sycebnl" ? `
+        <div class="info-box" style="margin-bottom:16px;">
+          <strong>Profil actif:</strong> ${getSycebnlEntityLabel()}. ${sycebnlType === "projets"
+            ? "Le plan met l'accent sur les fonds de projets, les charges de projet et masque les comptes propres aux cotisations membres et aux contributions volontaires."
+            : "Le plan met l'accent sur les fonds dedies, les donateurs / bailleurs, les cotisations et les contributions volontaires en nature."}
+        </div>
+      ` : ""}
       <input class="search-box" id="plan-search" placeholder="Rechercher par numero ou libelle..." value="${searchTerm}" style="margin-bottom:16px;">
       <div class="filter-row">
         <button class="filter-pill ${!filterClass ? 'active' : ''}" data-class="0">Toutes (${plan.length})</button>
@@ -3120,15 +3296,15 @@ function renderBalance() {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <label class="btn btn-outline" style="cursor:pointer;font-size:0.78rem;">
-            Importer CSV <input type="file" accept=".csv" style="display:none;" onchange="importBalanceCsv(this)">
+            Importer Excel <input type="file" accept=".xlsx,.xls" style="display:none;" onchange="importBalanceWorkbook(this)">
           </label>
-          <button class="btn btn-outline" style="font-size:0.78rem;" onclick="shareBalanceTemplate()">Partager modele CSV</button>
-          <button class="btn btn-outline" style="font-size:0.78rem;" onclick="downloadBalanceTemplate()">Modele CSV</button>
+          <button class="btn btn-outline" style="font-size:0.78rem;" onclick="shareBalanceTemplate()">Partager modele Excel</button>
+          <button class="btn btn-outline" style="font-size:0.78rem;" onclick="downloadBalanceTemplate()">Modele Excel</button>
         </div>
       </div>
       ${comptes.length === 0 ? `
         <div class="info-box">
-          La balance est vide. Importez un fichier CSV de soldes d'ouverture ou commencez par passer des ecritures pour alimenter automatiquement cette vue.
+          La balance est vide. Importez un fichier Microsoft Excel (.xlsx) de soldes d'ouverture ou commencez par passer des ecritures pour alimenter automatiquement cette vue. Le CSV reste accepte en mode legacy via glisser-deposer.
         </div>
       ` : `
       <div style="overflow-x:auto;">
@@ -3175,16 +3351,20 @@ function renderBalance() {
   `;
 }
 
-function importBalanceCsv(input) {
+function importBalanceWorkbook(input) {
   const file = input.files[0];
   if (!file) return;
   handleDroppedFile(file);
 }
 
 function downloadBalanceTemplate() {
-  const blob = buildBalanceTemplateBlob();
-  downloadBlobFile(blob, "balance_ouverture_template.csv");
-  showToast("Le modele balance_ouverture_template.csv a ete genere avec succes.", "success");
+  try {
+    const blob = buildBalanceTemplateBlob();
+    downloadBlobFile(blob, "balance_ouverture_template.xlsx");
+    showToast("Le modele balance_ouverture_template.xlsx a ete genere avec succes.", "success");
+  } catch (error) {
+    showToast(error.message || "Impossible de generer le modele Excel de balance d'ouverture.", "error");
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3204,7 +3384,7 @@ function renderBilan() {
   return `
     <div class="card">
       <div class="card-header">
-        <div class="card-title">Bilan — ${currentRef === "sycebnl" ? "SYCEBNL" : "SYSCOHADA Revise"}</div>
+        <div class="card-title">Bilan — ${currentRef === "sycebnl" ? `SYCEBNL ${getSycebnlEntityLabel()}` : "SYSCOHADA Revise"}</div>
         <div class="card-subtitle" style="color:${isBalanced?'var(--green)':'var(--red)'};">Equilibre: ${equilibriumLabel}</div>
       </div>
       ${!hasBalances ? `<div class="info-box" style="margin-bottom:16px;">Aucune donnee comptable n'est encore disponible. Le bilan s'affichera automatiquement apres import des soldes d'ouverture ou saisie des ecritures.</div>` : ''}
@@ -3247,7 +3427,14 @@ function renderResultat() {
     // Associations/ONG/Fondations: RA-RH (Revenus) / TA-TL (Charges) / XA/XB/XC/XD
     // Projets de developpement: RA-RE (Revenus) / TA-TN (Charges)
     const struct = sycebnlType === "projets" ? RESULTAT_SYCEBNL_PROJETS_STRUCTURE : RESULTAT_SYCEBNL_STRUCTURE;
-    const entityLabel = sycebnlType === "projets" ? "Projets de developpement" : "Associations / ONG / Fondations";
+    const entityLabel = getSycebnlEntityLabel();
+    const statementLabel = getResultatLabel();
+    const productsLabel = sycebnlType === "projets" ? "Ressources et produits de l'exercice" : "Revenus des activites ordinaires";
+    const chargesLabel = sycebnlType === "projets" ? "Emplois et charges de l'exercice" : "Charges des activites ordinaires";
+    const subtotalXaLabel = sycebnlType === "projets" ? "RESSOURCES ET PRODUITS DE L'EXERCICE" : "REVENUS DES ACTIVITES ORDINAIRES";
+    const subtotalXbLabel = sycebnlType === "projets" ? "EMPLOIS ET CHARGES DE L'EXERCICE" : "CHARGES DES ACTIVITES ORDINAIRES";
+    const subtotalXcLabel = sycebnlType === "projets" ? "SOLDE D'EXPLOITATION (XA - XB)" : "RESULTAT DES ACTIVITES ORDINAIRES (XA - XB)";
+    const finalLabel = sycebnlType === "projets" ? "SOLDE D'EXPLOITATION" : "SOLDE DES OPERATIONS";
 
     function sumRows(rows) {
       return rows.map(s => {
@@ -3266,12 +3453,9 @@ function renderResultat() {
     const revRows = sumRows(struct.revenus);
     const chgRows = sumRows(struct.charges);
     const xA = revRows.reduce((s,r)=>s+r.total, 0);
-    const xB = chgRows.filter(r=>r.sens==="debit").reduce((s,r)=>s+r.total, 0);
-    const haoP = chgRows.filter(r=>r.sens==="credit").reduce((s,r)=>s+r.total, 0);
-    const haoC = (struct.hao||[]).reduce((acc,s)=>{
-      let t=0; Object.keys(bal).forEach(code=>{if(s.comptes.some(p=>code.startsWith(p))){const mvtD=(bal[code].debit||0)-(bal[code].n1d||0);const mvtC=(bal[code].credit||0)-(bal[code].n1c||0);t+=s.sens==="credit"?mvtC-mvtD:mvtD-mvtC;}});return{...s,total:t};
-    }, []);
-    const haoRows = struct.hao ? sumRows(struct.hao) : [];
+    const ordinaryChargeRows = chgRows.filter((row) => !["TM", "TN"].includes(row.ref));
+    const xB = ordinaryChargeRows.filter(r=>r.sens==="debit").reduce((s,r)=>s+r.total, 0);
+    const haoRows = struct.hao ? sumRows(struct.hao) : chgRows.filter((row) => ["TM", "TN"].includes(row.ref));
     const xC = xA - xB;
     const xD = haoRows.filter(r=>r.sens==="credit").reduce((s,r)=>s+r.total,0) -
                haoRows.filter(r=>r.sens==="debit").reduce((s,r)=>s+r.total,0);
@@ -3289,7 +3473,7 @@ function renderResultat() {
       <div class="card">
         <div class="card-header">
           <div>
-            <div class="card-title">Compte de resultat — SYCEBNL</div>
+            <div class="card-title">${statementLabel} — SYCEBNL</div>
             <div class="card-subtitle">${entityLabel}</div>
           </div>
           <div style="display:flex;gap:8px;">
@@ -3297,9 +3481,14 @@ function renderResultat() {
             <button class="btn ${sycebnlType==="projets"?"btn-gold":"btn-outline"}" onclick="setSycebnlType('projets')">Projets</button>
           </div>
         </div>
-        ${!hasBalances ? `<div class="info-box" style="margin-bottom:16px;">Aucun mouvement n'est encore disponible pour produire le compte de resultat. Saisissez vos ecritures de l'exercice pour lancer le calcul.</div>` : ''}
+        <div class="info-box" style="margin-bottom:16px;">
+          ${sycebnlType === "projets"
+            ? "Le profil projets attend un bilan, un compte d'exploitation, un tableau de reconciliation de tresorerie, un tableau emplois ressources, un tableau d'execution budgetaire et une note annexe."
+            : "Le profil associations / ONG / fondations attend un bilan, un compte de resultat, un tableau de flux de tresorerie (TFT) et des notes annexes."}
+        </div>
+        ${!hasBalances ? `<div class="info-box" style="margin-bottom:16px;">Aucun mouvement n'est encore disponible pour produire ${statementLabel.toLowerCase()}. Saisissez vos ecritures de l'exercice pour lancer le calcul.</div>` : ''}
 
-        <div class="section-title" style="color:var(--green);margin-top:8px;">Revenus des Activites Ordinaires</div>
+        <div class="section-title" style="color:var(--green);margin-top:8px;">${productsLabel}</div>
         <table class="data-table" style="margin-bottom:8px;">
           <thead><tr><th style="width:50px;">REF</th><th>LIBELLES</th><th style="text-align:right;">N (XOF)</th></tr></thead>
           <tbody>
@@ -3310,24 +3499,24 @@ function renderResultat() {
             </tr>`).join("")}
             <tr style="font-weight:700;border-top:2px solid var(--green);background:rgba(0,230,118,0.06);">
               <td style="color:var(--green);">XA</td>
-              <td style="color:var(--green);">REVENUS DES ACTIVITES ORDINAIRES</td>
+              <td style="color:var(--green);">${subtotalXaLabel}</td>
               <td style="text-align:right;" class="credit">${fmt(xA)}</td>
             </tr>
           </tbody>
         </table>
 
-        <div class="section-title" style="color:var(--red);">Charges des Activites Ordinaires</div>
+        <div class="section-title" style="color:var(--red);">${chargesLabel}</div>
         <table class="data-table" style="margin-bottom:8px;">
           <thead><tr><th style="width:50px;">REF</th><th>LIBELLES</th><th style="text-align:right;">N (XOF)</th></tr></thead>
           <tbody>
-            ${chgRows.filter(r=>r.sens==="debit").map(r=>`<tr>
+            ${ordinaryChargeRows.filter(r=>r.sens==="debit").map(r=>`<tr>
               <td class="code" style="color:var(--orange);font-weight:700;">${r.ref}</td>
               <td>${r.label}</td>
               <td style="text-align:right;" class="debit">${r.total>0?fmt(r.total):'-'}</td>
             </tr>`).join("")}
             <tr style="font-weight:700;border-top:2px solid var(--red);background:rgba(255,82,82,0.06);">
               <td style="color:var(--red);">XB</td>
-              <td style="color:var(--red);">CHARGES DES ACTIVITES ORDINAIRES</td>
+              <td style="color:var(--red);">${subtotalXbLabel}</td>
               <td style="text-align:right;" class="debit">${fmt(xB)}</td>
             </tr>
           </tbody>
@@ -3337,7 +3526,7 @@ function renderResultat() {
           <tbody>
             <tr style="font-weight:700;border-top:2px solid var(--gold);font-size:1rem;">
               <td style="width:50px;color:var(--gold);">XC</td>
-              <td style="color:var(--gold);">RESULTAT DES ACTIVITES ORDINAIRES (XA - XB)</td>
+              <td style="color:var(--gold);">${subtotalXcLabel}</td>
               <td style="text-align:right;color:${xC>=0?'var(--green)':'var(--red)'};font-family:var(--mono);font-weight:700;">${fmt(xC)}</td>
             </tr>
             ${haoRows.length>0?haoRows.map(r=>`<tr>
@@ -3347,13 +3536,13 @@ function renderResultat() {
             ${haoRows.length>0?`<tr style="font-weight:700;"><td style="color:var(--muted);">XD</td><td style="color:var(--muted);">RESULTAT HAO (TM - TN)</td><td style="text-align:right;">${fmt(xD)}</td></tr>`:""}
             <tr style="font-weight:700;border-top:3px solid var(--gold);font-size:1.05rem;background:rgba(200,146,42,0.08);">
               <td style="color:var(--gold);">XC</td>
-              <td style="color:var(--gold);">SOLDE DES OPERATIONS — ${resultatNet>=0?'EXCEDENT':'DEFICIT'}</td>
+              <td style="color:var(--gold);">${finalLabel} — ${resultatNet>=0?'EXCEDENT':'DEFICIT'}</td>
               <td style="text-align:right;font-family:var(--mono);color:${resultatNet>=0?'var(--green)':'var(--red)'};">${fmt(Math.abs(resultatNet))} XOF</td>
             </tr>
           </tbody>
         </table>
 
-        ${cv9E>0||cv9R>0?`
+        ${sycebnlType === "associations" && (cv9E>0||cv9R>0)?`
         <div class="section-title" style="color:var(--cyan);">Classe 9 — Contributions volontaires en nature</div>
         <table class="data-table">
           <tbody>
@@ -3416,6 +3605,84 @@ resultat>=0?'Benefice':'Perte'}: ${fmt(Math.abs(resultat))} XOF</td>
 // FLUX DE TRESORERIE (legacy tab key: tafire)
 // ═══════════════════════════════════════════════════════════
 function renderTafire() {
+  const treasury = getTreasurySnapshot();
+
+  if (currentRef === "sycebnl") {
+    if (sycebnlType === "projets") {
+      const projectSnapshot = getProjectFinancialSnapshot();
+      return `
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Tableaux projets — SYCEBNL</div>
+              <div class="card-subtitle">Tableau de reconciliation de tresorerie, tableau emplois ressources et tableau d'execution budgetaire</div>
+            </div>
+          </div>
+          <div class="info-box" style="margin-bottom:16px;">
+            Pour un projet de developpement, le dossier attendu comprend le <strong>TRC</strong>, le <strong>TER</strong> et le <strong>TEB</strong>. Cette page fournit une base de preparation a partir des balances et mouvements deja saisis, tandis que le modele officiel telechargeable reste la reference de depot.
+          </div>
+          <div class="grid-3">
+            <div class="card" style="background:var(--surface2);">
+              <div class="section-title">TRC — Tresorerie</div>
+              <div style="font-size:0.82rem;color:var(--muted);line-height:1.9;">
+                Ouverture: <strong>${fmt(Math.abs(treasury.opening))} XOF</strong><br>
+                Encaissements: <strong style="color:var(--green);">${fmt(treasury.encaissements)} XOF</strong><br>
+                Decaissements: <strong style="color:var(--red);">${fmt(treasury.decaissements)} XOF</strong><br>
+                Cloture: <strong>${fmt(Math.abs(treasury.closing))} XOF</strong>
+              </div>
+            </div>
+            <div class="card" style="background:var(--surface2);">
+              <div class="section-title">TER — Emplois / Ressources</div>
+              <div style="font-size:0.82rem;color:var(--muted);line-height:1.9;">
+                Ressources mobilisees: <strong style="color:var(--green);">${fmt(projectSnapshot.resources)} XOF</strong><br>
+                Emplois executes: <strong style="color:var(--red);">${fmt(projectSnapshot.emplois)} XOF</strong><br>
+                Solde: <strong style="color:${projectSnapshot.solde >= 0 ? "var(--green)" : "var(--red)"};">${fmt(Math.abs(projectSnapshot.solde))} XOF ${projectSnapshot.solde >= 0 ? "disponibles" : "a couvrir"}</strong>
+              </div>
+            </div>
+            <div class="card" style="background:var(--surface2);">
+              <div class="section-title">TEB — Budget</div>
+              <div style="font-size:0.82rem;color:var(--muted);line-height:1.9;">
+                Base budgetaire estimee: <strong>${fmt(projectSnapshot.resources)} XOF</strong><br>
+                Execution constatee: <strong>${fmt(projectSnapshot.emplois)} XOF</strong><br>
+                Taux d'execution: <strong>${fmtPercent(projectSnapshot.executionRate, 1)}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="card">
+        <div class="card-header"><div class="card-title">Tableau de flux de tresorerie (TFT) — SYCEBNL</div></div>
+        <div class="info-box">
+          Pour les associations, ONG et fondations, les etats financiers attendus comprennent un <strong>bilan</strong>, un <strong>compte de resultat</strong>, un <strong>TFT</strong> et des <strong>notes annexes</strong>. Cette page synthese la tresorerie constatee avant generation de la liasse officielle.
+        </div>
+        <div class="grid-2" style="margin-top:16px;">
+          <div class="card" style="border-color:var(--green);">
+            <div style="color:var(--green);font-weight:700;margin-bottom:8px;">SYNTHESE TFT</div>
+            <div style="font-size:0.84rem;color:var(--muted);line-height:1.9;">
+              Tresorerie d'ouverture: <strong>${fmt(Math.abs(treasury.opening))} XOF</strong><br>
+              Encaissements: <strong style="color:var(--green);">${fmt(treasury.encaissements)} XOF</strong><br>
+              Decaissements: <strong style="color:var(--red);">${fmt(treasury.decaissements)} XOF</strong><br>
+              Variation nette: <strong style="color:${treasury.variation >= 0 ? "var(--green)" : "var(--red)"};">${fmt(Math.abs(treasury.variation))} XOF</strong><br>
+              Tresorerie de cloture: <strong>${fmt(Math.abs(treasury.closing))} XOF</strong>
+            </div>
+          </div>
+          <div class="card" style="border-color:var(--cyan);">
+            <div style="color:var(--cyan);font-weight:700;margin-bottom:8px;">POINTS DE CONTROLE</div>
+            <div style="font-size:0.84rem;color:var(--muted);line-height:1.8;">
+              Valider les encaissements de dons, subventions et cotisations.<br>
+              Rapprocher banques, caisse et decouverts avant cloture.<br>
+              Verifier que le TFT final concorde avec le bilan et les notes annexes.<br>
+              Completer les details qualitatifs directement dans la liasse officielle.
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="card">
       <div class="card-header"><div class="card-title">Tableau de flux de tresorerie (TFT)</div></div>
@@ -3541,6 +3808,46 @@ function exportAmortCsv() {
 // NOTES ANNEXES
 // ═══════════════════════════════════════════════════════════
 function renderAnnexes() {
+  if (currentRef === "sycebnl") {
+    const notes = sycebnlType === "projets"
+      ? [
+          "Note 1 — Regles et methodes comptables du projet",
+          "Note 2 — Sources de financement et conventions bailleurs",
+          "Note 3 — Immobilisations et actifs affectes au projet",
+          "Note 4 — Tableau de reconciliation de tresorerie",
+          "Note 5 — Tableau emplois ressources",
+          "Note 6 — Tableau d'execution budgetaire",
+          "Note 7 — Creances, dettes et avances de projet",
+          "Note 8 — Engagements contractuels et passifs eventuels",
+          "Note 9 — Informations fiscales et administratives"
+        ]
+      : [
+          "Note 1 — Regles et methodes comptables",
+          "Note 2 — Fonds dedies et ressources affectees",
+          "Note 3 — Dons, cotisations et generosite du public",
+          "Note 4 — Immobilisations et amortissements",
+          "Note 5 — Donateurs, bailleurs et creances",
+          "Note 6 — Tresorerie et placements",
+          "Note 7 — Contributions volontaires en nature",
+          "Note 8 — Engagements hors bilan",
+          "Note 9 — Informations fiscales et administratives"
+        ];
+
+    return `
+      <div class="card">
+        <div class="card-header"><div class="card-title">${getAnnexesLabel()} — SYCEBNL</div></div>
+        <div class="info-box" style="margin-bottom:16px;">
+          ${sycebnlType === "projets"
+            ? "Le dossier projets comprend un bilan, un compte d'exploitation, un tableau de reconciliation de tresorerie, un tableau emplois ressources, un tableau d'execution budgetaire et une note annexe."
+            : "Le dossier associations / ONG / fondations comprend un bilan, un compte de resultat, un TFT et des notes annexes."}
+        </div>
+        <div class="stack">
+          ${notes.map((note) => `<div class="card" style="padding:12px 16px;"><span style="color:var(--gold);font-weight:600;">${note}</span></div>`).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="card">
       <div class="card-header"><div class="card-title">Notes annexes aux etats financiers</div></div>
@@ -4361,6 +4668,10 @@ function renderDSF() {
   const templateMeta = getExactFiscalTemplateMeta();
   const statuses = getDsfStatusRows();
   const readyCount = statuses.filter((item) => item.status === "Pret").length;
+  const title = currentRef === "sycebnl" ? "Etats financiers SYCEBNL" : "Declaration Statistique et Fiscale (DSF)";
+  const subtitle = currentRef === "sycebnl"
+    ? `Remplissage du modele exact ${templateMeta.downloadName} pour ${getSycebnlEntityLabel().toLowerCase()}.`
+    : `Remplissage du modele exact ${templateMeta.downloadName} a partir des donnees de l'application.`;
   const sycebnlSelector = currentRef === "sycebnl"
     ? `
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
@@ -4384,8 +4695,8 @@ function renderDSF() {
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">Declaration Statistique et Fiscale (DSF)</div>
-          <div class="card-subtitle">Remplissage du modele exact ${templateMeta.downloadName} a partir des donnees de l'application.</div>
+          <div class="card-title">${title}</div>
+          <div class="card-subtitle">${subtitle}</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-outline" onclick="shareBfaLiasseFiscale()">Partager ${templateMeta.buttonLabel}</button>
@@ -4479,11 +4790,35 @@ function renderVeilleOhada() {
 // GUIDE OHADA
 // ═══════════════════════════════════════════════════════════
 function renderGuide() {
+  const sections = OHADA_GUIDE.sections.filter((section) => {
+    if (section.title === "SYSCOHADA Revise (2017)") return currentRef === "syscohada";
+    if (section.title === "SYCEBNL") return currentRef === "sycebnl";
+    if (section.title === "Etats financiers obligatoires") return false;
+    return true;
+  });
+
+  const statementsSection = currentRef === "sycebnl"
+    ? {
+        title: "Etats financiers obligatoires",
+        content: sycebnlType === "projets"
+          ? "Pour un projet de developpement en SYCEBNL, le jeu d'etats attendu comprend notamment: 1) Bilan, 2) Compte d'exploitation, 3) Tableau de reconciliation de tresorerie, 4) Tableau emplois ressources, 5) Tableau d'execution budgetaire, 6) Note annexe."
+          : "Pour une association, ONG ou fondation en SYCEBNL, le jeu d'etats attendu comprend notamment: 1) Bilan, 2) Compte de resultat, 3) Tableau de flux de tresorerie (TFT), 4) Notes annexes."
+      }
+    : {
+        title: "Etats financiers obligatoires",
+        content: "Le systeme normal SYSCOHADA revise exige notamment: 1) Bilan, 2) Compte de resultat, 3) Tableau de flux de tresorerie (TFT), 4) Notes annexes. Le systeme minimal de tresorerie (SMT) est reserve aux tres petites entites."
+      };
+
   return `
     <div class="card">
-      <div class="card-header"><div class="card-title">${OHADA_GUIDE.title}</div></div>
+      <div class="card-header">
+        <div>
+          <div class="card-title">${OHADA_GUIDE.title}</div>
+          <div class="card-subtitle">Lecture filtree sur le referentiel actif: ${getReferentialLabel()}${currentRef === "sycebnl" ? ` — ${getSycebnlEntityLabel()}` : ""}</div>
+        </div>
+      </div>
       <div class="stack">
-        ${OHADA_GUIDE.sections.map(s => `
+        ${[...sections, statementsSection].map(s => `
           <div class="card" style="background:var(--surface2);">
             <div style="font-weight:700;color:var(--gold);margin-bottom:8px;">${s.title}</div>
             <div style="font-size:0.88rem;color:var(--muted);line-height:1.7;">${s.content}</div>
@@ -4504,6 +4839,18 @@ function renderGuide() {
 // COMPARAISON SYSCOHADA vs SYCEBNL
 // ═══════════════════════════════════════════════════════════
 function renderComparaison() {
+  if (currentCompanyId) {
+    return `
+      <div class="card">
+        <div class="card-header"><div class="card-title">Comparaison des referentiels</div></div>
+        <div class="info-box">
+          Ce dossier est deja verrouille sur <strong>${getReferentialLabel()}${currentRef === "sycebnl" ? ` — ${getSycebnlEntityLabel()}` : ""}</strong>.<br><br>
+          Pour eviter de melanger les informations, la comparaison SYSCOHADA / SYCEBNL n'est plus affichee dans un dossier entreprise actif.
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="card">
       <div class="card-header"><div class="card-title">SYSCOHADA Revise vs SYCEBNL</div></div>
@@ -4661,7 +5008,7 @@ function handleDroppedFile(file) {
       } else if (result.count > 0) {
         showToast('Import refuse: la balance d\'ouverture n\'est pas equilibree (ecart ' + fmt(Math.abs(result.gap)) + ').', 'error');
       } else {
-        showToast('Aucun compte detecte. Verifiez le format CSV.', 'error');
+        showToast('Aucun compte detecte. Verifiez le format du fichier de balance.', 'error');
       }
     };
     reader.readAsText(file);
@@ -4675,38 +5022,17 @@ function handleDroppedFile(file) {
     reader.onload = (e) => {
       try {
         const wb = XLSX.read(e.target.result, { type: 'binary' });
-        // Try to find a balance sheet (first sheet with account data)
-        const importedBalances = {};
-        let count = 0;
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        // Detect header row: look for a row with 'Compte' or numeric-looking first cell
-        let startRow = 1;
-        for (let i = 0; i < Math.min(rows.length, 10); i++) {
-          const first = String(rows[i][0]||'').trim();
-          if (first.toLowerCase().includes('compte') || /^\d{1,4}$/.test(first)) {
-            startRow = /^\d{1,4}$/.test(first) ? i : i + 1;
-            break;
-          }
-        }
-        rows.slice(startRow).forEach(row => {
-          const code = String(row[0]||'').replace(/\..*/, '').trim(); // strip .0
-          const n1d = parseFloat(row[2]) || 0;
-          const n1c = parseFloat(row[3]) || 0;
-          if (code && /^\d+$/.test(code)) {
-            importedBalances[code] = { n1d, n1c };
-            count++;
-          }
-        });
-        const summary = getOpeningBalanceSummary(importedBalances);
-        if (count > 0 && summary.isBalanced) {
-          replaceOpeningBalances(importedBalances);
-          showToast(count + ' comptes importes depuis ' + file.name + ' - balance d\'ouverture equilibree.', 'success');
+        const result = parseBalanceRows(rows);
+        if (result.count > 0 && result.isBalanced) {
+          replaceOpeningBalances(result.balances);
+          showToast(result.count + ' comptes importes depuis ' + file.name + ' - balance d\'ouverture equilibree.', 'success');
           render();
-        } else if (count > 0) {
-          showToast('Import refuse: la balance d\'ouverture n\'est pas equilibree (ecart ' + fmt(Math.abs(summary.gap)) + ').', 'error');
+        } else if (result.count > 0) {
+          showToast('Import refuse: la balance d\'ouverture n\'est pas equilibree (ecart ' + fmt(Math.abs(result.gap)) + ').', 'error');
         } else {
-          showToast('Aucun compte trouve dans ' + file.name + '. Format attendu: Compte | Libelle | S.O.D | S.O.C', 'error');
+          showToast('Aucun compte trouve dans ' + file.name + '. Format attendu: Compte | Libelle | S.O. Debit | S.O. Credit', 'error');
         }
       } catch (err) {
         showToast('Erreur lecture Excel: ' + err.message, 'error');
@@ -4769,30 +5095,86 @@ function handleDroppedFile(file) {
     reader.readAsText(file);
 
   } else {
-    showToast('Format non supporte: ' + file.name + ' — Utiliser CSV, Excel (.xlsx) ou JSON', 'error');
+    showToast('Format non supporte: ' + file.name + ' — Utiliser Microsoft Excel (.xlsx), CSV legacy ou JSON', 'error');
   }
 }
 
-function parseBalanceCsv(text) {
-  const lines = text.split('\n').slice(1);
+function normalizeImportedAmount(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const normalized = String(value || "")
+    .replace(/\u00A0/g, "")
+    .replace(/\s+/g, "")
+    .replace(/,/g, ".");
+  const parsed = parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeBalanceHeader(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function parseBalanceRows(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
   const balances = {};
   let count = 0;
-  lines.forEach(line => {
-    const cols = line.split(',');
-    if (cols.length < 4) return;
-    const code = cols[0].trim().replace(/"/g, '');
-    const n1d = parseFloat(cols[2]) || 0;
-    const n1c = parseFloat(cols[3]) || 0;
+  let startRow = 0;
+  let codeIndex = 0;
+  let labelIndex = 1;
+  let debitIndex = 2;
+  let creditIndex = 3;
+
+  for (let i = 0; i < Math.min(safeRows.length, 12); i++) {
+    const row = Array.isArray(safeRows[i]) ? safeRows[i] : [];
+    const headers = row.map(normalizeBalanceHeader);
+    const foundCode = headers.findIndex((header) => header === "compte" || header.includes("numero compte"));
+    const foundDebit = headers.findIndex((header) => header.includes("s o debit") || header.includes("solde debit") || header === "debit");
+    const foundCredit = headers.findIndex((header) => header.includes("s o credit") || header.includes("solde credit") || header === "credit");
+    if (foundCode !== -1 && foundDebit !== -1 && foundCredit !== -1) {
+      startRow = i + 1;
+      codeIndex = foundCode;
+      labelIndex = headers.findIndex((header) => header === "libelle");
+      debitIndex = foundDebit;
+      creditIndex = foundCredit;
+      break;
+    }
+
+    const first = String(row[0] || "").replace(/\..*/, "").trim();
+    if (/^\d{1,6}$/.test(first)) {
+      startRow = i;
+      break;
+    }
+  }
+
+  safeRows.slice(startRow).forEach((row) => {
+    const values = Array.isArray(row) ? row : [];
+    const code = String(values[codeIndex] || "").replace(/\..*/, "").trim();
+    const n1d = normalizeImportedAmount(values[debitIndex]);
+    const n1c = normalizeImportedAmount(values[creditIndex]);
     if (code && /^\d+$/.test(code)) {
       balances[code] = { n1d, n1c };
       count++;
     }
   });
+
   return {
     count,
     balances,
     ...getOpeningBalanceSummary(balances)
   };
+}
+
+function parseBalanceCsv(text) {
+  const delimiter = text.includes(";") && !text.includes(",") ? ";" : ",";
+  const rows = text
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .map((line) => line.split(delimiter).map((cell) => cell.trim().replace(/^"|"$/g, "")));
+  return parseBalanceRows(rows);
 }
 
 function showToast(msg, type) {
